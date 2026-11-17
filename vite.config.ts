@@ -50,6 +50,13 @@ export default defineConfig({
     },
   },
   build: {
+    // 多入口：index.html 是主窗口，tray.html 是托盘弹窗（独立小入口，不加载主应用路由）
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        tray: fileURLToPath(new URL("./tray.html", import.meta.url)),
+      },
+    },
     // Tauri 使用系统 WebView：Windows 是 WebView2，其余是 WebKit。
     // safari16 是 Tailwind CSS 4 的低线，比 Tauri 模板默认的 safari13 更稳妥。
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari16",

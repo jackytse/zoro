@@ -12,6 +12,7 @@ const colorMode = useColorMode();
 const navLinks = [
   { label: "首页", to: "/" },
   { label: "技术栈", to: "/stack" },
+  { label: "设置", to: "/settings" },
 ];
 
 /** 在明暗之间直接翻转，不做 system 态的回退，避免点击后看起来“没反应” */

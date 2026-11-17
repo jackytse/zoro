@@ -76,6 +76,16 @@ const stack = [
           Nuxt UI 组件
         </UButton>
       </div>
+
+      <!-- 托盘行为说明：只在桌面端展示，浏览器里没有托盘概念 -->
+      <UAlert
+        v-if="isTauri()"
+        color="info"
+        variant="subtle"
+        icon="i-lucide-panel-top"
+        title="应用已驻留菜单栏托盘"
+        description="点击窗口关闭按钮只是隐藏主窗口，应用仍在后台运行；点击菜单栏托盘图标可快速打开最近项目，关闭应用请使用托盘菜单里的「退出」。"
+      />
     </div>
 
     <!-- VueUse 实时能力演示 -->

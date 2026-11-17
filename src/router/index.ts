@@ -17,6 +17,12 @@ const router = createRouter({
       component: () => import("../views/StackView.vue"),
     },
     {
+      path: "/settings",
+      name: "settings",
+      // 托盘弹窗的「设置」入口指向这里
+      component: () => import("../views/SettingsView.vue"),
+    },
+    {
       // 桌面端没有地址栏，出现未知路径时回到首页而不是留白
       path: "/:pathMatch(.*)*",
       redirect: "/",

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>zoro</title>
+    <script>
+      // 首屏渲染前同步主题，避免深色模式下闪白。
+      // 键名与 @vueuse/core useColorMode 的默认 storageKey 保持一致。
+      try {
+        var mode = localStorage.getItem("vueuse-color-scheme");
+        var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (mode === "dark" || (mode !== "light" && prefersDark)) {
+          document.documentElement.classList.add("dark");
+        }
+      } catch (error) {
+        // localStorage 被禁用时退化为浅色，无需处理
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

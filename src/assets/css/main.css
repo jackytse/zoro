@@ -1,0 +1,7 @@
+/* 入口样式：Tailwind 4 只需要声明引入，Nuxt UI 的主题令牌由 @nuxt/ui 提供 */
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/* Tailwind 4 的 dark 变体默认跟随 prefers-color-scheme，
+   而 Nuxt UI 依赖 html.dark 类来切换，这里显式覆盖成 class 策略 */
+@custom-variant dark (&:where(.dark, .dark *));

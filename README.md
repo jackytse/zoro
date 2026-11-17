@@ -22,8 +22,8 @@ Vite+ + Vue 3 + Nuxt UI + VueUse + Tauri 的桌面应用起步项目。
 ## 常用命令
 
 ```sh
-pnpm dev                  # Vite+ 开发服务器（浏览器，端口 5173）
-pnpm run desktop:dev      # Tauri 桌面窗口（自动拉起前端 dev server）
+pnpm dev                  # 浏览器开发，端口 5173
+pnpm run desktop:dev      # Tauri 桌面窗口，端口 1420（自动拉起前端 dev server）
 pnpm build                # 类型检查 + 生产构建（Rolldown），输出 dist/
 pnpm run desktop:build    # 打包桌面安装包
 vp check                  # 格式化 + lint + 类型检查（--fix 自动修复）
@@ -31,6 +31,15 @@ vp test                   # Vitest 单测
 ```
 
 > 注意：`vp dev` / `vp build` 是 Vite+ 内置命令；要执行 package.json 里的脚本请用 `pnpm run xxx` 或 `vp run xxx`。
+
+### 两个 dev server 分别占什么端口
+
+| 命令 | 端口 | 说明 |
+| --- | --- | --- |
+| `pnpm dev` | 5173 | 浏览器调试用 |
+| `pnpm run desktop:dev` | 1420 | Tauri 壳加载的地址，由 `dev:desktop` 脚本指定 |
+
+两者使用**不同端口**，所以可以在开着一个的情况下再跑另一个，不会互相抢占。不要手动再起一个占 1420 的 server，否则 `beforeDevCommand` 会因 `--strictPort` 直接失败。
 
 ## 目录结构
 
@@ -46,5 +55,5 @@ vite.config.ts          # Vite+ 统一配置（插件 / lint / fmt / staged）
 ## 备注
 
 - Nuxt UI 会在项目根目录生成 `auto-imports.d.ts` 与 `components.d.ts`（已 gitignore），首次 `pnpm dev` 或 `pnpm build` 后产生，`vue-tsc` 依赖它们做类型检查。
-- `src-tauri/tauri.conf.json` 中 `build.beforeDevCommand` 为 `vp dev`，Windows 下用 `vp.cmd` 或改走 `pnpm` 脚本均可。
+- `src-tauri/tauri.conf.json` 的 `build.beforeDevCommand` 用的是 `pnpm dev:desktop` 而非 `vp dev`：一是即使全局 `vp` 不在 PATH（IDE 内置终端常见）也能靠 `node_modules/.bin/vp` 兜底，二是端口与浏览器版 dev server 隔离开。
 - 图标使用 `@iconify-json/lucide` 本地集合，桌面端离线可用。

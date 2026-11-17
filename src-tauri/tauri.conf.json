@@ -5,9 +5,9 @@
   "identifier": "dev.zoro.desktop",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "vp dev",
-    "beforeBuildCommand": "vp build"
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm dev:desktop",
+    "beforeBuildCommand": "pnpm build"
   },
   "app": {
     "windows": [

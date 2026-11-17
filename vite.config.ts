@@ -32,7 +32,8 @@ export default defineConfig({
   // Tauri 的 CLI 输出需要保留，不能被 Vite 清屏覆盖
   clearScreen: false,
   server: {
-    // Tauri 的 devUrl 写死了端口，端口必须固定，否则壳子会连不上
+    // 浏览器开发用 5173；桌面端由 `dev:desktop` 脚本用 --port 1420 覆盖，
+    // 两边端口分开才能同时开着而不抢占（Tauri 的 devUrl 写死 1420）
     port: 5173,
     strictPort: true,
     host: host || false,

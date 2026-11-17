@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vp dev",
+    "dev:desktop": "vp dev --port 1420 --strictPort",
     "build": "run-s build-only type-check",
     "preview": "vp preview",
     "build-only": "vp build",

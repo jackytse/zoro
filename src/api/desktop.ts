@@ -36,6 +36,8 @@ export interface DesktopConfig {
   autostart: boolean;
   /** 终端打开方式："window" = 新窗口（默认），"existing" = 现有窗口 */
   terminalOpenMode: string | null;
+  /** 界面语言："zh-CN" | "zh-TW" | "en"；null = 跟随系统语言 */
+  locale: string | null;
 }
 
 /** 从本机开发工具记录里探测到的候选项目 */
@@ -66,6 +68,12 @@ export const desktop = {
   /** 设置终端打开方式："window"（新窗口，默认）或 "existing"（现有窗口） */
   setTerminalMode: (mode: "window" | "existing") =>
     invoke<DesktopConfig>("set_terminal_mode", { mode }),
+  /**
+   * 设置界面语言；null = 跟随系统。
+   * 后端会广播 config-changed 并按新语言重建托盘菜单。
+   */
+  setLocale: (locale: "zh-CN" | "zh-TW" | "en" | null) =>
+    invoke<DesktopConfig>("set_locale", { locale }),
   /**
    * 设置全局快捷键；null = 恢复平台默认，"" = 禁用。
    * 失败时 reject 中文错误（组合冲突 / 无法解析）。

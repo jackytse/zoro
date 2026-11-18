@@ -259,6 +259,31 @@ pub fn set_terminal_mode(
   Ok(state.config.lock().unwrap().clone())
 }
 
+/// 设置界面语言："zh-CN" / "zh-TW" / "en"，None = 跟随系统语言。
+/// 保存后广播 config-changed（前端两窗口热切换），并按新语言重建托盘菜单。
+#[tauri::command]
+pub fn set_locale(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  locale: Option<String>,
+) -> Result<Config, String> {
+  // 只接受合法值（或 None），避免把垃圾数据写进配置文件
+  if let Some(l) = &locale {
+    if l != "zh-CN" && l != "zh-TW" && l != "en" {
+      return Err(format!("不支持的语言：{l}"));
+    }
+  }
+  {
+    let mut cfg = state.config.lock().unwrap();
+    cfg.locale = locale;
+  }
+  config::save(&state)?;
+  // 托盘菜单文案独立于前端，需要在这里同步重建
+  tray::refresh_tray_locale(&app);
+  broadcast(&app);
+  Ok(state.config.lock().unwrap().clone())
+}
+
 /// 隐藏托盘弹窗（Esc 键 / 设置跳转时使用）。
 #[tauri::command]
 pub fn hide_tray_popup(app: AppHandle) -> Result<(), String> {

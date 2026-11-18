@@ -30,16 +30,41 @@ const FOCUS_GRACE: Duration = Duration::from_millis(400);
 /// 弹窗与托盘图标 / 屏幕边缘的间距（物理像素）
 const GAP: i32 = 8;
 
-/// 创建托盘图标：左键 = 弹出最近项目，右键 = 系统菜单（显示主窗口 / 退出）。
-pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
-  let menu = Menu::with_items(
+/// 按语言构建托盘右键菜单文案。locale 取自 config（Rust 侧已归一化为
+/// "zh-CN" / "zh-TW" / "en"），与前端语言包的 key 保持一致。
+fn build_menu(app: &AppHandle, locale: &str) -> tauri::Result<Menu<tauri::Wry>> {
+  let (settings_label, quit_label) = match locale {
+    "zh-TW" => ("設定", "結束"),
+    "en" => ("Settings", "Quit"),
+    _ => ("设置", "退出"),
+  };
+  Menu::with_items(
     app,
     &[
       // 右键菜单第一项就是设置：菜单文案与弹窗底部入口保持一致
-      &MenuItem::with_id(app, "show-main", "设置", true, None::<&str>)?,
-      &MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?,
+      &MenuItem::with_id(app, "show-main", settings_label, true, None::<&str>)?,
+      &MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?,
     ],
-  )?;
+  )
+}
+
+/// 各语言对应的托盘 tooltip 文案
+fn tray_tooltip(locale: &str) -> &'static str {
+  match locale {
+    "zh-TW" => "zoro - 最近專案",
+    "en" => "zoro - Recent Projects",
+    _ => "zoro - 最近项目",
+  }
+}
+
+/// 创建托盘图标：左键 = 弹出最近项目，右键 = 系统菜单（显示主窗口 / 退出）。
+pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
+  // 菜单语言跟随配置；此时 AppState 已 manage（lib.rs setup 顺序保证）
+  let locale = app
+    .try_state::<AppState>()
+    .map(|s| s.config.lock().unwrap().locale().to_string())
+    .unwrap_or_default();
+  let menu = build_menu(app, &locale)?;
 
   TrayIconBuilder::with_id(TRAY_ID)
     .icon(tauri::image::Image::from_bytes(include_bytes!(
@@ -50,7 +75,7 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
     .menu(&menu)
     // 左键留给弹窗逻辑，菜单只在右键出现
     .show_menu_on_left_click(false)
-    .tooltip("zoro - 最近项目")
+    .tooltip(tray_tooltip(&locale))
     .on_menu_event(|app, event| match event.id().as_ref() {
       "show-main" => show_main_window(app),
       "quit" => app.exit(0),
@@ -72,6 +97,31 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
     })
     .build(app)?;
   Ok(())
+}
+
+/// 语言切换后重建托盘菜单与 tooltip（set_locale 命令调用）。
+/// 失败只记日志：菜单语言滞后一拍不影响任何功能。
+pub fn refresh_tray_locale(app: &AppHandle) {
+  let locale = app
+    .state::<AppState>()
+    .config
+    .lock()
+    .unwrap()
+    .locale()
+    .to_string();
+  let Some(tray) = app.tray_by_id(TRAY_ID) else {
+    log::warn!("托盘图标不存在，菜单语言未更新");
+    return;
+  };
+  match build_menu(app, &locale) {
+    Ok(menu) => {
+      if let Err(err) = tray.set_menu(Some(menu)) {
+        log::warn!("托盘菜单语言更新失败：{err}");
+      }
+      let _ = tray.set_tooltip(Some(tray_tooltip(&locale)));
+    }
+    Err(err) => log::warn!("重建托盘菜单失败：{err}"),
+  }
 }
 
 /// 启动时创建一次弹窗窗口：无边框、置顶、不进任务栏、初始不可见。

@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { open } from "@tauri-apps/plugin-dialog";
 import { desktop, type DesktopConfig, type DetectedProject } from "../api/desktop";
+import { applyLocale, resolveLocale, LOCALE_LABELS, type AppLocale } from "../i18n";
 import ToolIcon from "../components/ToolIcon.vue";
 import { useNotify } from "../composables/useNotify";
 import { formatRelativeTime } from "../utils/time";
 
 const notify = useNotify();
+const { t } = useI18n();
 
 const config = ref<DesktopConfig | null>(null);
 const isLoading = ref(true);
@@ -21,8 +24,8 @@ const isSubmitting = ref(false);
 
 /** 表单校验：路径必填、必须选择工具 */
 const formError = computed(() => {
-  if (!form.value.path.trim()) return "请填写项目路径";
-  if (!form.value.toolId) return "请选择开发工具";
+  if (!form.value.path.trim()) return t("settings.pathRequired");
+  if (!form.value.toolId) return t("settings.toolRequired");
   return null;
 });
 
@@ -32,13 +35,13 @@ async function browseFolder() {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "选择项目目录",
+      title: t("settings.pickFolder"),
     });
     if (typeof selected === "string" && selected) {
       form.value.path = selected;
     }
   } catch (error) {
-    notify("error", "打开目录选择器失败", { description: String(error) });
+    notify("error", t("settings.browseFailed"), { description: String(error) });
   }
 }
 
@@ -52,10 +55,35 @@ const toolOptions = computed(() =>
 async function loadConfig() {
   try {
     config.value = await desktop.getConfig();
+    // 语言跟随配置热切换（弹窗改语言 / 其他窗口同步都会走到这里）
+    applyLocale(resolveLocale(config.value.locale));
   } catch (error) {
-    notify("error", "读取配置失败", { description: String(error) });
+    notify("error", t("tray.loadConfigFailed"), { description: String(error) });
   } finally {
     isLoading.value = false;
+  }
+}
+
+/* ---------- 语言设置 ---------- */
+
+/** 跟随系统 + 三个显式语言选项；"follow" 映射为后端的 null */
+const languageValue = computed(() => config.value?.locale ?? "follow");
+const languageOptions = [
+  { label: t("settings.followSystem"), value: "follow" },
+  ...(Object.keys(LOCALE_LABELS) as AppLocale[]).map((l) => ({
+    label: LOCALE_LABELS[l],
+    value: l,
+  })),
+];
+
+/** 切换界面语言；后端广播后两个窗口都会通过 loadConfig 同步生效 */
+async function setLanguage(value: string) {
+  const locale = value === "follow" ? null : (value as AppLocale);
+  try {
+    config.value = await desktop.setLocale(locale);
+  } catch (error) {
+    notify("error", t("settings.setFailed"), { description: String(error) });
+    config.value = await desktop.getConfig();
   }
 }
 
@@ -71,12 +99,12 @@ async function addProject() {
       path: form.value.path,
       toolId: form.value.toolId,
     });
-    notify("success", "已添加项目");
+    notify("success", t("settings.added"));
     // 只清空输入，保留上次选择的工具方便连续添加
     form.value.name = "";
     form.value.path = "";
   } catch (error) {
-    notify("error", "添加失败", { description: String(error) });
+    notify("error", t("settings.addFailed"), { description: String(error) });
   } finally {
     isSubmitting.value = false;
   }
@@ -85,9 +113,9 @@ async function addProject() {
 async function removeProject(id: string, name: string) {
   try {
     config.value = await desktop.removeProject(id);
-    notify("success", `已移除「${name}」`);
+    notify("success", t("settings.removed", { name }));
   } catch (error) {
-    notify("error", "移除失败", { description: String(error) });
+    notify("error", t("settings.removeFailed"), { description: String(error) });
   }
 }
 
@@ -97,7 +125,7 @@ async function openProject(id: string, name: string) {
   try {
     await desktop.openProject(id);
   } catch (error) {
-    notify("error", `打开「${name}」失败`, { description: String(error) });
+    notify("error", t("settings.openTryFailed", { name }), { description: String(error) });
   }
 }
 
@@ -118,7 +146,9 @@ const scanSummary = computed(() => {
   for (const item of scanItems.value) {
     counts.set(item.toolId, (counts.get(item.toolId) ?? 0) + 1);
   }
-  return [...counts.entries()].map(([id, n]) => `${toolLabel(id)} ${n} 条`).join(" · ");
+  return [...counts.entries()]
+    .map(([id, n]) => `${toolLabel(id)} ${t("settings.scanCount", { n })}`)
+    .join(" · ");
 });
 
 /** 勾选数量，导入按钮据此禁用 */
@@ -159,11 +189,9 @@ async function scanProjects() {
   try {
     const items = await desktop.scanRecentProjects();
     if (items.length === 0) {
-      notify(
-        "info",
-        "没有扫描到新的最近项目",
-        { description: "本机工具的记录都已配置过，或这些工具尚未在本机使用。" },
-      );
+      notify("info", t("settings.scanEmpty"), {
+        description: t("settings.scanEmptyDesc"),
+      });
       return;
     }
     scanItems.value = items;
@@ -172,7 +200,7 @@ async function scanProjects() {
     importTool.value = Object.fromEntries(items.map((i) => [i.path, i.toolId]));
     importOpen.value = true;
   } catch (error) {
-    notify("error", "扫描失败", { description: String(error) });
+    notify("error", t("settings.scanFailed"), { description: String(error) });
   } finally {
     isScanning.value = false;
   }
@@ -199,8 +227,10 @@ async function importSelected() {
   importOpen.value = false;
 
   if (ok > 0) {
-    notify("success", `已导入 ${ok} 个项目`, {
-      description: failures.length ? `${failures.length} 条失败，详情见后续提示` : undefined,
+    notify("success", t("settings.imported", { n: ok }), {
+      description: failures.length
+        ? t("settings.importFailures", { n: failures.length })
+        : undefined,
     });
   }
   for (const message of failures.slice(0, 3)) {
@@ -229,7 +259,7 @@ function formatShortcut(raw: string) {
 /** 当前生效组合的展示（null = 默认，"" = 禁用） */
 const shortcutDisplay = computed(() => {
   const custom = config.value?.globalShortcut;
-  if (custom === "") return "已禁用";
+  if (custom === "") return t("settings.shortcutDisabled");
   return formatShortcut(custom ?? "Super+Shift+P");
 });
 
@@ -283,10 +313,10 @@ async function saveShortcut() {
   if (!preview) return;
   try {
     config.value = await desktop.setGlobalShortcut(preview);
-    notify("success", "全局快捷键已更新");
+    notify("success", t("settings.shortcutUpdated"));
     stopRecording();
   } catch (error) {
-    notify("error", "设置快捷键失败", { description: String(error) });
+    notify("error", t("settings.shortcutSetFailed"), { description: String(error) });
   }
 }
 
@@ -294,10 +324,10 @@ async function saveShortcut() {
 async function resetShortcut() {
   try {
     config.value = await desktop.setGlobalShortcut(null);
-    notify("success", "已恢复默认快捷键");
+    notify("success", t("settings.shortcutReset"));
     stopRecording();
   } catch (error) {
-    notify("error", "操作失败", { description: String(error) });
+    notify("error", t("settings.actionFailed"), { description: String(error) });
   }
 }
 
@@ -305,10 +335,10 @@ async function resetShortcut() {
 async function disableShortcut() {
   try {
     config.value = await desktop.setGlobalShortcut("");
-    notify("success", "全局快捷键已禁用");
+    notify("success", t("settings.shortcutDisabledToast"));
     stopRecording();
   } catch (error) {
-    notify("error", "操作失败", { description: String(error) });
+    notify("error", t("settings.actionFailed"), { description: String(error) });
   }
 }
 
@@ -321,7 +351,7 @@ async function setTerminalMode(mode: string) {
   try {
     config.value = await desktop.setTerminalMode(value);
   } catch (error) {
-    notify("error", "设置终端打开方式失败", { description: String(error) });
+    notify("error", t("settings.terminalModeFailed"), { description: String(error) });
     config.value = await desktop.getConfig();
   }
 }
@@ -332,9 +362,9 @@ async function setTerminalMode(mode: string) {
 async function toggleAutostart(enabled: boolean) {
   try {
     config.value = await desktop.setAutostart(enabled);
-    notify("success", enabled ? "已开启开机自启" : "已关闭开机自启");
+    notify("success", enabled ? t("settings.autostartOn") : t("settings.autostartOff"));
   } catch (error) {
-    notify("error", "设置失败", { description: String(error) });
+    notify("error", t("settings.setFailed"), { description: String(error) });
     config.value = await desktop.getConfig();
   }
 }
@@ -354,40 +384,42 @@ export default { name: "SettingsView" };
 <template>
   <section class="space-y-8">
     <div class="space-y-2">
-      <h1 class="text-2xl font-semibold tracking-tight">设置</h1>
+      <h1 class="text-2xl font-semibold tracking-tight">{{ t("settings.title") }}</h1>
       <p class="text-sm text-muted">
-        配置常用开发工具与项目路径，配置完成后可在托盘弹窗中快速打开。
+        {{ t("settings.subtitle") }}
       </p>
     </div>
 
     <!-- 新增项目 -->
     <UCard>
       <template #header>
-        <p class="font-medium">添加项目</p>
+        <p class="font-medium">{{ t("settings.addProject") }}</p>
       </template>
       <form class="space-y-4" @submit.prevent="addProject">
         <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="项目名称" hint="留空则取目录名">
-            <UInput v-model="form.name" placeholder="我的项目" class="w-full" />
+          <UFormField :label="t('settings.projectName')" :hint="t('settings.nameHint')">
+            <UInput v-model="form.name" :placeholder="t('settings.namePlaceholder')" class="w-full" />
           </UFormField>
-          <UFormField label="开发工具">
+          <UFormField :label="t('settings.tool')">
             <USelect v-model="form.toolId" :items="toolOptions" class="w-full" />
           </UFormField>
         </div>
-        <UFormField label="项目路径" hint="支持 ~ 前缀，如 ~/Projects/zoro">
+        <UFormField :label="t('settings.projectPath')" :hint="t('settings.pathHint')">
           <div class="flex w-full gap-2">
             <UInput v-model="form.path" placeholder="/Users/you/Projects/demo" class="flex-1" />
             <UButton
               icon="i-lucide-folder-open"
               color="neutral"
               variant="soft"
-              aria-label="浏览目录"
+              :aria-label="t('settings.browse')"
               @click="browseFolder"
             />
           </div>
         </UFormField>
         <div class="flex justify-end">
-          <UButton type="submit" icon="i-lucide-plus" :loading="isSubmitting"> 添加到托盘 </UButton>
+          <UButton type="submit" icon="i-lucide-plus" :loading="isSubmitting">
+            {{ t("settings.addToTray") }}
+          </UButton>
         </div>
       </form>
     </UCard>
@@ -396,7 +428,7 @@ export default { name: "SettingsView" };
     <UCard>
       <template #header>
         <div class="flex items-center justify-between gap-3">
-          <p class="font-medium">从开发工具导入</p>
+          <p class="font-medium">{{ t("settings.import") }}</p>
           <UButton
             size="sm"
             variant="soft"
@@ -404,21 +436,19 @@ export default { name: "SettingsView" };
             :loading="isScanning"
             @click="scanProjects"
           >
-            扫描最近项目
+            {{ t("settings.scan") }}
           </UButton>
         </div>
       </template>
       <p class="text-sm text-muted">
-        读取 VS Code / Cursor 的最近工作区与 JetBrains
-        系列产品的最近项目记录（只读，不会写入这些工具的数据）。
-        已自动过滤已删除目录和配置过的路径；iTerm 没有可读取的记录，未参与扫描。
+        {{ t("settings.importDesc") }}
       </p>
     </UCard>
 
     <!-- 已配置项目 -->
     <UCard>
       <template #header>
-        <p class="font-medium">已配置项目（{{ config?.projects.length ?? 0 }}）</p>
+        <p class="font-medium">{{ t("settings.configuredProjects", { n: config?.projects.length ?? 0 }) }}</p>
       </template>
       <div v-if="isLoading" class="flex flex-col gap-2">
         <USkeleton v-for="i in 3" :key="i" class="h-10 rounded-lg" />
@@ -427,7 +457,7 @@ export default { name: "SettingsView" };
         v-else-if="(config?.projects.length ?? 0) === 0"
         class="py-6 text-center text-sm text-muted"
       >
-        还没有项目，用上面的表单添加第一个吧。
+        {{ t("settings.emptyProjects") }}
       </p>
       <ul v-else class="divide-y divide-default">
         <li
@@ -450,14 +480,14 @@ export default { name: "SettingsView" };
             {{ formatRelativeTime(project.lastOpenedAt) }}
           </span>
           <UBadge color="neutral" variant="subtle" size="sm">
-            {{ config!.tools.find((t) => t.id === project.toolId)?.name ?? "未知工具" }}
+            {{ config!.tools.find((t) => t.id === project.toolId)?.name ?? $t("tray.unknownTool") }}
           </UBadge>
           <UButton
             size="xs"
             color="neutral"
             variant="ghost"
             icon="i-lucide-external-link"
-            aria-label="试运行打开"
+            :aria-label="$t('settings.tryOpen')"
             @click="openProject(project.id, project.name)"
           />
           <UButton
@@ -465,7 +495,7 @@ export default { name: "SettingsView" };
             color="error"
             variant="ghost"
             icon="i-lucide-trash-2"
-            aria-label="移除项目"
+            :aria-label="$t('settings.removeProject')"
             @click="removeProject(project.id, project.name)"
           />
         </li>
@@ -475,10 +505,10 @@ export default { name: "SettingsView" };
     <!-- 工具清单（内置，只读展示） -->
     <UCard>
       <template #header>
-        <p class="font-medium">可用工具</p>
+        <p class="font-medium">{{ t("settings.tools") }}</p>
       </template>
       <p class="mb-3 text-xs text-muted">
-        打开顺序：优先执行 CLI，找不到时通过登录 shell 解析，最后回退到 open -a 应用名。
+        {{ t("settings.toolsDesc") }}
       </p>
       <ul class="divide-y divide-default">
         <li
@@ -500,36 +530,51 @@ export default { name: "SettingsView" };
     <!-- 通用设置 -->
     <UCard>
       <template #header>
-        <p class="font-medium">通用</p>
+        <p class="font-medium">{{ t("settings.general") }}</p>
       </template>
       <div class="flex items-center justify-between gap-4">
         <div>
-          <p class="text-sm font-medium">开机自动启动</p>
-          <p class="mt-0.5 text-xs text-muted">登录系统后自动运行并最小化到托盘，不弹出主窗口</p>
+          <p class="text-sm font-medium">{{ t("settings.autostart") }}</p>
+          <p class="mt-0.5 text-xs text-muted">{{ t("settings.autostartDesc") }}</p>
         </div>
         <USwitch
           :model-value="config?.autostart ?? false"
-          aria-label="开机自动启动"
+          :aria-label="t('settings.autostart')"
           @update:model-value="toggleAutostart"
+        />
+      </div>
+      <!-- 语言：跟随系统 / 简体中文 / 繁體中文 / English，切换后全局热生效 -->
+      <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
+        <div>
+          <p class="text-sm font-medium">{{ t("settings.language") }}</p>
+          <p class="mt-0.5 text-xs text-muted">{{ t("settings.languageDesc") }}</p>
+        </div>
+        <URadioGroup
+          :model-value="languageValue"
+          :items="languageOptions"
+          variant="card"
+          orientation="horizontal"
+          :aria-label="t('settings.language')"
+          @update:model-value="setLanguage"
         />
       </div>
       <!-- 终端打开方式：影响最近项目悬停终端图标的行为 -->
       <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
         <div>
-          <p class="text-sm font-medium">终端打开方式</p>
+          <p class="text-sm font-medium">{{ t("settings.terminalMode") }}</p>
           <p class="mt-0.5 text-xs text-muted">
-            最近项目里点终端图标时，在新窗口还是现有窗口打开
+            {{ t("settings.terminalModeDesc") }}
           </p>
         </div>
         <URadioGroup
           :model-value="(config?.terminalOpenMode as 'window' | 'existing') ?? 'window'"
           :items="[
-            { label: '新窗口', value: 'window' },
-            { label: '现有窗口', value: 'existing' },
+            { label: t('settings.terminalWindow'), value: 'window' },
+            { label: t('settings.terminalExisting'), value: 'existing' },
           ]"
           variant="card"
           orientation="horizontal"
-          aria-label="终端打开方式"
+          :aria-label="t('settings.terminalMode')"
           @update:model-value="setTerminalMode"
         />
       </div>
@@ -538,11 +583,11 @@ export default { name: "SettingsView" };
     <!-- 全局快捷键 -->
     <UCard>
       <template #header>
-        <p class="font-medium">全局快捷键</p>
+        <p class="font-medium">{{ t("settings.shortcut") }}</p>
       </template>
       <div class="space-y-4">
         <div class="flex items-center gap-3">
-          <span class="text-sm text-muted">呼出最近项目弹窗</span>
+          <span class="text-sm text-muted">{{ t("settings.shortcutHint") }}</span>
           <UKbd v-if="!isRecording" size="md">{{ shortcutDisplay }}</UKbd>
           <!-- 录入态：聚焦的方块捕获按键组合 -->
           <div
@@ -556,24 +601,24 @@ export default { name: "SettingsView" };
             <span v-if="shortcutPreview" class="font-medium">{{
               formatShortcut(shortcutPreview)
             }}</span>
-            <span v-else class="text-xs text-muted">按下组合键…（Esc 取消）</span>
+            <span v-else class="text-xs text-muted">{{ t("settings.pressKeys") }}</span>
           </div>
         </div>
         <p class="text-xs text-muted">
-          平台默认 {{ formatShortcut("Super+Shift+P") }}；组合需包含修饰键，支持字母 / 数字 /
-          F1-F12。
-          注册失败通常意味着组合被其他应用占用。
+          {{ t("settings.shortcutDesc", { default: formatShortcut("Super+Shift+P") }) }}
         </p>
         <div class="flex justify-end gap-2">
           <template v-if="isRecording">
-            <UButton size="sm" color="neutral" variant="ghost" @click="stopRecording">取消</UButton>
+            <UButton size="sm" color="neutral" variant="ghost" @click="stopRecording">
+              {{ t("settings.cancel") }}
+            </UButton>
             <UButton
               size="sm"
               icon="i-lucide-check"
               :disabled="!shortcutPreview"
               @click="saveShortcut"
             >
-              保存
+              {{ t("settings.save") }}
             </UButton>
           </template>
           <template v-else>
@@ -585,7 +630,7 @@ export default { name: "SettingsView" };
               variant="soft"
               @click="resetShortcut"
             >
-              恢复默认
+              {{ t("settings.reset") }}
             </UButton>
             <UButton
               v-else
@@ -594,10 +639,10 @@ export default { name: "SettingsView" };
               variant="soft"
               @click="disableShortcut"
             >
-              禁用
+              {{ t("settings.disable") }}
             </UButton>
             <UButton size="sm" variant="soft" icon="i-lucide-pencil-line" @click="startRecording">
-              修改
+              {{ t("settings.edit") }}
             </UButton>
           </template>
         </div>
@@ -607,15 +652,15 @@ export default { name: "SettingsView" };
     <!-- 导入确认弹窗：勾选要导入的项目并确认打开工具 -->
     <UModal
       v-model:open="importOpen"
-      title="导入最近项目"
-      :description="scanSummary || '选择要导入的项目'"
+      :title="t('settings.importTitle')"
+      :description="scanSummary || t('settings.importPickDesc')"
     >
       <template #body>
         <!-- 全选栏固定在滚动区外，列表很长时也能随时全选/取消全选 -->
         <div class="mb-2 flex items-center gap-2 border-b border-default pb-2">
           <UCheckbox
             :model-value="selectAllState"
-            label="全选"
+            :label="t('settings.selectAll')"
             @update:model-value="toggleSelectAll"
           />
           <span class="ml-auto text-xs text-muted">
@@ -651,9 +696,11 @@ export default { name: "SettingsView" };
       <template #footer>
         <div class="flex w-full items-center justify-end gap-3">
           <!-- 数量已在 body 顶部的全选栏展示，这里只留操作按钮 -->
-          <UButton color="neutral" variant="ghost" @click="importOpen = false"> 取消 </UButton>
+          <UButton color="neutral" variant="ghost" @click="importOpen = false">
+            {{ t("settings.cancel") }}
+          </UButton>
           <UButton icon="i-lucide-check" :disabled="selectedCount === 0" @click="importSelected">
-            导入 {{ selectedCount }} 项
+            {{ t("settings.importN", { n: selectedCount }) }}
           </UButton>
         </div>
       </template>

@@ -63,6 +63,10 @@ pub struct Config {
   /// 旧配置文件没有该字段时按默认值反序列化，不需要迁移。
   #[serde(default)]
   pub terminal_open_mode: Option<String>,
+  /// 界面语言："zh-CN" | "zh-TW" | "en"；None = 跟随系统语言。
+  /// 前端两个窗口与 Rust 托盘菜单共用这一份语言设置。
+  #[serde(default)]
+  pub locale: Option<String>,
 }
 
 /// serde 默认值辅助：true
@@ -79,6 +83,17 @@ impl Config {
     match self.terminal_open_mode.as_deref() {
       Some("existing") => "existing",
       _ => "window",
+    }
+  }
+
+  /// 归一化后的界面语言：只可能是 "zh-CN" / "zh-TW" / "en"。
+  /// None 或无法识别的值统一回落 "zh-CN"（托盘菜单等 Rust 侧文案用它），
+  /// 「跟随系统」的探测逻辑在前端（navigator.language），Rust 侧不重复实现。
+  pub fn locale(&self) -> &str {
+    match self.locale.as_deref() {
+      Some("zh-TW") => "zh-TW",
+      Some("en") => "en",
+      _ => "zh-CN",
     }
   }
 }
@@ -139,6 +154,8 @@ impl Config {
       autostart: true,
       // 出厂默认：终端在新窗口打开（旧配置文件缺字段时同样按 window 处理）
       terminal_open_mode: None,
+      // 出厂默认：跟随系统语言（前端按 navigator.language 探测）
+      locale: None,
     }
   }
 }

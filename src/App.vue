@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useColorMode } from "@vueuse/core";
+import { useI18n } from "vue-i18n";
 
 /**
  * 明暗主题：Nuxt UI 的组件样式跟着 html 上的 .dark 类走，
@@ -7,6 +8,7 @@ import { useColorMode } from "@vueuse/core";
  * 两者天然对齐，所以这里直接用 vueuse 的实现而不是 Nuxt UI 的 colorMode 插件。
  */
 const colorMode = useColorMode();
+const { t } = useI18n();
 
 /** 在明暗之间直接翻转，不做 system 态的回退，避免点击后看起来“没反应” */
 function toggleColorMode() {
@@ -44,7 +46,7 @@ function toggleColorMode() {
             color="neutral"
             variant="ghost"
             size="xs"
-            :aria-label="colorMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'"
+            :aria-label="colorMode === 'dark' ? t('app.toLightMode') : t('app.toDarkMode')"
             @click="toggleColorMode"
           />
         </div>

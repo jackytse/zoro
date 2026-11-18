@@ -11,8 +11,35 @@ use crate::config::Tool;
 use std::path::Path;
 use std::process::Command;
 
+/// 判断是否为「把终端应用当工具」的配置（如出厂默认的 iTerm 工具）。
+///
+/// 这类工具的正确语义是「在该终端里 cd 到项目目录」，不能走通用的
+/// spawn 链路：`open -a iTerm <目录>` 里 iTerm 会忽略目录参数，
+/// 新窗口只会落在 $HOME。必须交给 open_in_terminal 的 AppleScript
+/// 专用链路处理。
+fn is_terminal_tool(tool: &Tool) -> bool {
+  /// 视为终端应用的 -a 目标名（contains 匹配，兼容 "iTerm2" 等写法）
+  const TERMINAL_APPS: [&str; 2] = ["iTerm", "Terminal"];
+
+  if tool.command == "open" {
+    // 形如 open -a <App> 的配置：看 <App> 是不是终端应用
+    if let Some(pos) = tool.args.iter().position(|a| a == "-a") {
+      if let Some(app) = tool.args.get(pos + 1) {
+        return TERMINAL_APPS.iter().any(|t| app.contains(t));
+      }
+    }
+  }
+  // 按 id 兜底：老配置升级后 command 可能被用户改过
+  matches!(tool.id.as_str(), "iterm" | "terminal")
+}
+
 /// 用给定工具打开一个已存在的路径。
 pub fn open_with_tool(tool: &Tool, path: &str) -> Result<(), String> {
+  // 终端类工具语义特殊，直接复用终端打开链路（含 AppleScript + 降级）
+  if is_terminal_tool(tool) {
+    return open_in_terminal(path, "window");
+  }
+
   let target = Path::new(path);
   if !target.exists() {
     return Err(format!("路径不存在或已被移动：{path}"));
@@ -102,7 +129,24 @@ pub fn open_in_terminal(path: &str, mode: &str) -> Result<(), String> {
         return Ok(());
       }
     }
-    return Err("未能通过 iTerm / Terminal 打开目录（请检查是否已安装并授权自动化权限）".into());
+    // 自动化权限被拒（用户点了「不允许」/ 从未授权）时，用 open 兜底：
+    // Terminal.app 支持「文件夹作为文档」，`open -a Terminal <目录>` 不依赖
+    // Apple Events 授权也能在正确目录开新窗口。iTerm 无此能力，只能退到
+    // Terminal——目录正确比应用偏好更重要。
+    match Command::new("open")
+      .args(["-a", "Terminal"])
+      .arg(target)
+      .output()
+    {
+      Ok(out) if out.status.success() => return Ok(()),
+      Ok(out) => {
+        log::warn!("open -a Terminal 兜底失败：{}", String::from_utf8_lossy(&out.stderr).trim())
+      }
+      Err(err) => log::warn!("无法执行 open -a Terminal：{err}"),
+    }
+    return Err(
+      "未能通过 iTerm / Terminal 打开目录。请在 系统设置 → 隐私与安全性 → 自动化 中允许 Zoro 控制 iTerm / Terminal，或检查应用是否已安装".into(),
+    );
   }
 
   #[cfg(target_os = "windows")]
@@ -262,5 +306,31 @@ mod tests {
     assert_eq!(shell_quote("plain"), "'plain'");
     assert_eq!(shell_quote("a b"), "'a b'");
     assert_eq!(shell_quote("it's"), r"'it'\''s'");
+  }
+
+  #[test]
+  fn terminal_tools_are_routed_to_terminal_chain() {
+    // 出厂默认的 iTerm 工具：open -a iTerm，必须走 open_in_terminal 专用链路，
+    // 否则目录参数会被 iTerm 忽略、窗口落在 $HOME
+    let iterm = Tool {
+      id: "iterm".into(),
+      name: "iTerm".into(),
+      command: "open".into(),
+      args: vec!["-a".into(), "iTerm".into()],
+      app_name: None,
+      icon: "i-lucide-terminal".into(),
+    };
+    assert!(is_terminal_tool(&iterm));
+
+    // 普通 IDE 工具即便 command 恰好叫别的也不受影响
+    let mut vscode = tool("code", None);
+    vscode.id = "vscode".into();
+    assert!(!is_terminal_tool(&vscode));
+
+    // 用户改过 command 的 iterm 配置也能按 id 兜底识别
+    let mut iterm2 = iterm.clone();
+    iterm2.command = "/Applications/iTerm.app/Contents/MacOS/iTerm2".into();
+    iterm2.args = vec![];
+    assert!(is_terminal_tool(&iterm2));
   }
 }

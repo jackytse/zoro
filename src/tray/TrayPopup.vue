@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useNotify } from "../composables/useNotify";
 import { desktop, type DesktopConfig, type Project } from "../api/desktop";
+import { applyLocale, resolveLocale } from "../i18n";
 import ToolIcon from "../components/ToolIcon.vue";
 import { formatRelativeTime } from "../utils/time";
 
 const notify = useNotify();
+const { t } = useI18n();
 
 /** 配置快照；null 表示还在加载首屏 */
 const config = ref<DesktopConfig | null>(null);
@@ -30,8 +33,10 @@ const isLoading = ref(true);
 async function loadConfig() {
   try {
     config.value = await desktop.getConfig();
+    // 语言跟随配置热切换：设置页改语言后，广播会让弹窗同步生效
+    applyLocale(resolveLocale(config.value.locale));
   } catch (error) {
-    notify("error", "读取配置失败", { description: String(error) });
+    notify("error", t("tray.loadConfigFailed"), { description: String(error) });
   } finally {
     isLoading.value = false;
   }
@@ -44,9 +49,14 @@ async function openProject(project: Project) {
     await desktop.openProject(project.id);
   } catch (error) {
     // 打开失败必须给用户明确反馈：显示工具名 + 后端给出的原因
-    notify("error", `无法用 ${tool?.name ?? "所选工具"} 打开「${project.name}」`, {
-      description: String(error),
-    });
+    notify(
+      "error",
+      t("tray.openFailed", {
+        tool: tool?.name ?? t("tray.unknownTool"),
+        name: project.name,
+      }),
+      { description: String(error) },
+    );
   }
 }
 
@@ -55,7 +65,7 @@ async function goSettings() {
   try {
     await desktop.showMainWindow();
   } catch (error) {
-    notify("error", "打开设置失败", { description: String(error) });
+    notify("error", t("tray.openSettingsFailed"), { description: String(error) });
   }
 }
 
@@ -64,7 +74,7 @@ async function quitApp() {
   try {
     await desktop.quitApp();
   } catch (error) {
-    notify("error", "退出失败", { description: String(error) });
+    notify("error", t("tray.quitFailed"), { description: String(error) });
   }
 }
 
@@ -74,7 +84,7 @@ async function openInTerminal(project: Project) {
   try {
     await desktop.openInTerminal(project.path);
   } catch (error) {
-    notify("error", "在终端打开失败", { description: String(error) });
+    notify("error", t("tray.terminalOpenFailed"), { description: String(error) });
   }
 }
 
@@ -107,12 +117,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- 窗口本体是透明的，这里负责画出圆角卡片；阴影由系统窗口阴影提供 -->
-  <UApp>
+  <!-- 窗口本体是透明的，这里负责画出圆角卡片；阴影由系统窗口阴影提供。
+       toaster 配置与主窗口 App.vue 保持一致：顶部居中 + 不显示倒计时进度条 -->
+  <UApp :toaster="{ position: 'top-center', progress: false }">
     <div class="flex h-screen flex-col overflow-hidden rounded-xl bg-default text-default">
       <header class="flex items-center gap-2 border-b border-default px-4 py-3">
         <UIcon name="i-lucide-clock-arrow-up" class="size-4 text-primary" />
-        <span class="text-sm font-medium">最近项目</span>
+        <span class="text-sm font-medium">{{ t("tray.recentProjects") }}</span>
         <UBadge v-if="config" color="neutral" variant="subtle" size="sm" class="ml-auto">
           {{ recentProjects.length }}
         </UBadge>
@@ -130,13 +141,15 @@ onBeforeUnmount(() => {
           class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
         >
           <UIcon name="i-lucide-folder-search" class="size-10 text-dimmed" />
-          <p class="text-sm font-medium">还没有配置项目</p>
+          <p class="text-sm font-medium">{{ t("tray.noProjectTitle") }}</p>
           <!-- w-full 很关键：flex 容器里不定宽的文本会按 max-content 撑开，
                长句会溢出窗口而不是换行 -->
           <p class="w-full text-xs leading-relaxed text-muted">
-            在主窗口的「设置」里添加常用项目路径并选择开发工具，就会出现在这里。
+            {{ t("tray.noProjectHint") }}
           </p>
-          <UButton size="sm" icon="i-lucide-settings-2" @click="goSettings">去设置</UButton>
+          <UButton size="sm" icon="i-lucide-settings-2" @click="goSettings">
+            {{ t("tray.goSettings") }}
+          </UButton>
         </div>
 
         <!-- 项目列表 -->
@@ -156,7 +169,7 @@ onBeforeUnmount(() => {
               <span class="min-w-0 flex-1">
                 <span class="block truncate text-sm font-medium">{{ project.name }}</span>
                 <span class="block truncate text-xs text-muted">
-                  {{ toolMap.get(project.toolId)?.name ?? "未知工具" }} · {{ project.path }}
+                  {{ toolMap.get(project.toolId)?.name ?? t("tray.unknownTool") }} · {{ project.path }}
                 </span>
               </span>
               <span class="shrink-0 text-xs text-dimmed">
@@ -170,8 +183,8 @@ onBeforeUnmount(() => {
                 variant="ghost"
                 size="xs"
                 class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                :aria-label="`在终端打开 ${project.name}`"
-                title="在终端打开"
+                :aria-label="t('tray.openInTerminalNamed', { name: project.name })"
+                :title="t('tray.openInTerminal')"
                 @click.stop="openInTerminal(project)"
               />
             </button>
@@ -188,14 +201,14 @@ onBeforeUnmount(() => {
           class="ml-auto"
           @click="goSettings"
         >
-          设置
+          {{ t("tray.settings") }}
         </UButton>
         <UButton
           size="sm"
           color="neutral"
           variant="ghost"
           icon="i-lucide-power"
-          aria-label="退出应用"
+          :aria-label="t('tray.quitApp')"
           @click="quitApp"
         />
       </footer>

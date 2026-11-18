@@ -150,6 +150,7 @@ pub fn run() {
       commands::open_project,
       commands::open_in_terminal,
       commands::set_terminal_mode,
+      commands::set_locale,
       commands::show_main_window,
       commands::hide_tray_popup,
       commands::quit_app,

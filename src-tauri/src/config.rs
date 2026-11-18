@@ -162,7 +162,7 @@ impl CatalogEntry {
 /// 其他 IDE → 终端。终端类（iterm/terminal）必须保留：它们走
 /// open_in_terminal 专用链路（见 opener::is_terminal_tool），且
 /// Terminal.app 在任何 macOS 上都存在，保证列表非空。
-pub const TOOL_CATALOG: [CatalogEntry; 14] = [
+pub const TOOL_CATALOG: [CatalogEntry; 18] = [
   CatalogEntry {
     id: "vscode",
     name: "VS Code",
@@ -234,6 +234,42 @@ pub const TOOL_CATALOG: [CatalogEntry; 14] = [
     app_name: "CLion",
     icon: "i-lucide-binary",
     app_paths: &["/Applications/CLion.app", "~/Applications/CLion.app"],
+  },
+  CatalogEntry {
+    id: "rider",
+    name: "Rider",
+    command: "rider",
+    args: &[],
+    app_name: "Rider",
+    icon: "i-lucide-package",
+    app_paths: &["/Applications/Rider.app", "~/Applications/Rider.app"],
+  },
+  CatalogEntry {
+    id: "phpstorm",
+    name: "PhpStorm",
+    command: "phpstorm",
+    args: &[],
+    app_name: "PhpStorm",
+    icon: "i-lucide-code-xml",
+    app_paths: &["/Applications/PhpStorm.app", "~/Applications/PhpStorm.app"],
+  },
+  CatalogEntry {
+    id: "datagrip",
+    name: "DataGrip",
+    command: "datagrip",
+    args: &[],
+    app_name: "DataGrip",
+    icon: "i-lucide-database",
+    app_paths: &["/Applications/DataGrip.app", "~/Applications/DataGrip.app"],
+  },
+  CatalogEntry {
+    id: "rubymine",
+    name: "RubyMine",
+    command: "rubymine",
+    args: &[],
+    app_name: "RubyMine",
+    icon: "i-lucide-gem",
+    app_paths: &["/Applications/RubyMine.app", "~/Applications/RubyMine.app"],
   },
   CatalogEntry {
     id: "android-studio",

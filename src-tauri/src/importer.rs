@@ -253,8 +253,9 @@ fn read_uris_from_storage_json(path: &Path) -> Vec<String> {
 }
 
 /// 扫描 JetBrains 系（含 Android Studio，二者数据格式一致）的 recentProjects.xml。
-/// `tool_id` 决定扫出的项目归属哪个工具（idea / android-studio）。
-fn scan_jetbrains(base: &Path, existing: &[(String, String)], tool_id: &str) -> Vec<DetectedProject> {
+/// 扫出的项目按产品目录名归类到对应工具（IntelliJIdea2026.3 → idea、
+/// Rider2026.1 → rider 等）；识别不了的产品回落到 idea。
+fn scan_jetbrains(base: &Path, existing: &[(String, String)], fallback_tool_id: &str) -> Vec<DetectedProject> {
   let Ok(home) = std::env::var("HOME") else {
     return Vec::new();
   };
@@ -273,6 +274,13 @@ fn scan_jetbrains(base: &Path, existing: &[(String, String)], tool_id: &str) -> 
     let Ok(xml) = std::fs::read_to_string(&xml_path) else {
       continue;
     };
+    // 产品目录名 = 产品名 + 版本号，取前缀小写后按映射归类
+    let dir_name = product
+      .file_name()
+      .and_then(|n| n.to_str())
+      .unwrap_or_default()
+      .to_lowercase();
+    let tool_id = jetbrains_tool_id(&dir_name).unwrap_or(fallback_tool_id);
     for path in extract_recent_paths(&xml, &home) {
       if out.len() >= MAX_PER_SOURCE {
         return out;
@@ -281,6 +289,27 @@ fn scan_jetbrains(base: &Path, existing: &[(String, String)], tool_id: &str) -> 
     }
   }
   out
+}
+
+/// JetBrains 产品配置目录名前缀 → zoro 工具 id。
+/// 目录名形如 `Rider2026.1`，用小写前缀匹配而非精确名，避免版本号干扰。
+fn jetbrains_tool_id(dir_name_lower: &str) -> Option<&'static str> {
+  const PREFIXES: &[(&str, &str)] = &[
+    ("intellijidea", "idea"),
+    ("androidstudio", "android-studio"),
+    ("rider", "rider"),
+    ("pycharm", "pycharm"),
+    ("webstorm", "webstorm"),
+    ("goland", "goland"),
+    ("clion", "clion"),
+    ("phpstorm", "phpstorm"),
+    ("datagrip", "datagrip"),
+    ("rubymine", "rubymine"),
+  ];
+  PREFIXES
+    .iter()
+    .find(|(prefix, _)| dir_name_lower.starts_with(prefix))
+    .map(|(_, id)| *id)
 }
 
 /// 统一的合法性检查后入列：目录必须存在，且（路径 + 工具）未被配置过。
@@ -418,6 +447,19 @@ fn xml_unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// JetBrains 产品目录名 → 工具 id：带版本号、不带版本号、未知产品回落
+  #[test]
+  fn maps_jetbrains_product_dirs_to_tools() {
+    assert_eq!(jetbrains_tool_id("intellijidea2026.3"), Some("idea"));
+    assert_eq!(jetbrains_tool_id("rider2026.1"), Some("rider"));
+    assert_eq!(jetbrains_tool_id("pycharm2023.3"), Some("pycharm"));
+    assert_eq!(jetbrains_tool_id("androidstudio2024.1"), Some("android-studio"));
+    assert_eq!(jetbrains_tool_id("phpstorm"), Some("phpstorm"));
+    assert_eq!(jetbrains_tool_id("datagrip2024.2"), Some("datagrip"));
+    assert_eq!(jetbrains_tool_id("rubymine2024.1"), Some("rubymine"));
+    assert_eq!(jetbrains_tool_id("unknownproduct2026.1"), None);
+  }
 
   /// file:// URI 解码：普通路径、百分号编码路径
   #[test]

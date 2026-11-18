@@ -46,12 +46,14 @@ if ($Ref -like "v*") {
 # ---------- 2. 打包（msi + nsis） ----------
 # tauri build 会先跑 beforeBuildCommand（pnpm build）再编译 release；
 # --bundles msi,nsis 同时产出企业部署用的 msi 与普通安装的 setup.exe。
+# 注意 PowerShell 会把裸逗号 `msi,nsis` 当数组语法展开，tauri 收到
+# "msi nsis" 直接报 invalid value——所以用重复 flag 的写法绕开解析差异。
 # 先清掉 bundle 输出目录：编译缓存卷里会残留旧版本的安装包，
 # 不清理的话后面的产物收集可能挑中上一次的旧包。
 $BundleDir = Join-Path $TargetRoot "release\bundle"
 if (Test-Path $BundleDir) { Remove-Item -Recurse -Force $BundleDir }
 $StartAt = [DateTime]::Now
-pnpm exec tauri build --bundles msi,nsis
+pnpm exec tauri build --bundles msi --bundles nsis
 Write-Host ("打包耗时: {0}s" -f ([int]([DateTime]::Now - $StartAt).TotalSeconds))
 
 # ---------- 3. 产物定位与校验 ----------

@@ -45,8 +45,10 @@ start_at=$SECONDS
 pnpm exec tauri build --bundles app,dmg
 echo "打包耗时: $((SECONDS - start_at))s"
 
-APP_DIR="src-tauri/target/release/bundle/macos"
-DMG_DIR="src-tauri/target/release/bundle/dmg"
+# .app/.dmg 落盘位置同样跟随 CARGO_TARGET_DIR（自建 Mac 节点用 HOME 缓存卷增量编译）
+TARGET_ROOT="${CARGO_TARGET_DIR:-src-tauri/target}"
+APP_DIR="$TARGET_ROOT/release/bundle/macos"
+DMG_DIR="$TARGET_ROOT/release/bundle/dmg"
 APP="$(ls -d "$APP_DIR"/*.app | head -1)"
 DMG="$(ls "$DMG_DIR"/*.dmg | head -1)"
 echo "产物: $APP"

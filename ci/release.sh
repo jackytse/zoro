@@ -43,7 +43,10 @@ pnpm exec tauri build --bundles deb
 echo "打包耗时: $((SECONDS - start_at))s"
 
 # ---------- 3. 产物校验 ----------
-DEB_DIR="src-tauri/target/release/bundle/deb"
+# deb 落盘位置跟随 CARGO_TARGET_DIR：设置了缓存卷时 bundle 输出在
+# $CARGO_TARGET_DIR/release/bundle/ 下，而不是工作区内的 src-tauri/target/
+TARGET_ROOT="${CARGO_TARGET_DIR:-src-tauri/target}"
+DEB_DIR="$TARGET_ROOT/release/bundle/deb"
 DEB="$(ls "$DEB_DIR"/*.deb | head -1)"
 echo "产物: $DEB"
 

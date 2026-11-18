@@ -50,6 +50,7 @@ vp test                   # Vitest 单测
 - **托盘右键**：系统菜单（显示主窗口 / 退出）。
 - **弹窗内容**：按最近打开时间排序的项目列表（项目名、工具名、路径、相对时间），底部有「设置」与「退出」。
 - **设置页**（主窗口 `/settings`）：添加 / 移除 / 试打开项目，工具清单为内置只读。
+- **导入最近项目**：设置页可一键扫描本机 VS Code / Cursor 的最近工作区（`storage.json`）与 JetBrains 系列的最近项目（`recentProjects.xml`），弹窗勾选后批量导入，可改选打开工具；只读扫描，自动过滤已删除目录与已配置路径（iTerm 无记录源，不参与）。
 - **打开策略**：直接执行 CLI → 登录 shell 解析（兼容 nvm/homebrew 的 PATH）→ macOS `open -a` 兜底；三级都失败时弹窗会显示明确错误。
 
 配置持久化在 `~/Library/Application Support/dev.zoro.desktop/config.json`，文件损坏时自动回退默认值。

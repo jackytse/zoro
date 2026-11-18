@@ -5,6 +5,7 @@
 //! 让弹窗和设置页保持一致。
 
 use crate::config::{self, AppState, Config, Project};
+use crate::importer::{self, DetectedProject};
 use crate::{opener, tray};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -12,6 +13,28 @@ use tauri::{AppHandle, Emitter, Manager, State};
 #[tauri::command]
 pub fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
   Ok(state.config.lock().unwrap().clone())
+}
+
+/// 扫描本机开发工具（VS Code / Cursor / JetBrains 系列）的最近打开目录记录，
+/// 返回过滤掉不存在目录与已配置项之后的候选列表。
+///
+/// 只做文件读取，不写任何外部数据；扫描放在命令线程上，
+/// 避免阻塞 UI 主线程。
+#[tauri::command]
+pub fn scan_recent_projects(
+  state: State<'_, AppState>,
+) -> Result<Vec<DetectedProject>, String> {
+  // 快照已配置的（路径, 工具）对，供 importer 过滤重复
+  let existing = {
+    let cfg = state.config.lock().unwrap();
+    cfg
+      .projects
+      .iter()
+      .map(|p| (p.path.clone(), p.tool_id.clone()))
+      .collect::<Vec<_>>()
+  };
+  let home = std::env::var("HOME").map_err(|_| "无法获取用户主目录".to_string())?;
+  Ok(importer::scan(std::path::Path::new(&home), &existing))
 }
 
 /// 新增一条项目记录。

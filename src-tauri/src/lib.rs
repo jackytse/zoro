@@ -7,6 +7,7 @@
 
 mod commands;
 mod config;
+mod importer;
 mod opener;
 mod tray;
 
@@ -57,6 +58,7 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       commands::get_config,
+      commands::scan_recent_projects,
       commands::add_project,
       commands::remove_project,
       commands::open_project,

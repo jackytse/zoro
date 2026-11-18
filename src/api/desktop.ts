@@ -32,8 +32,18 @@ export interface DesktopConfig {
   projects: Project[];
 }
 
+/** 从本机开发工具记录里探测到的候选项目 */
+export interface DetectedProject {
+  name: string;
+  path: string;
+  /** 建议使用的工具 id（来源工具），导入时可改选 */
+  toolId: string;
+}
+
 export const desktop = {
   getConfig: () => invoke<DesktopConfig>("get_config"),
+  /** 扫描 VS Code / Cursor / JetBrains 的最近打开目录记录（只读，已过滤已配置项） */
+  scanRecentProjects: () => invoke<DetectedProject[]>("scan_recent_projects"),
   /** 新增项目；失败时 reject 一个可直接展示的中文错误信息 */
   addProject: (input: { name: string; path: string; toolId: string }) =>
     invoke<DesktopConfig>("add_project", {

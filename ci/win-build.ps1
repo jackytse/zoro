@@ -12,8 +12,16 @@
 # 本文件必须带 UTF-8 BOM 才能正确解析中文注释（PS5 无 BOM 按 ANSI 读取）。
 $ErrorActionPreference = "Stop"
 
-# rustup 装在 USERPROFILE\.cargo\bin，可能不在 runner 默认 PATH 里，显式补上
-$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+# rustup 装在 USERPROFILE\.cargo\bin，可能不在 runner 默认 PATH 里，显式补上；
+# node 是 setup 阶段便携 zip 装的（USERPROFILE\.cache\nodejs\node-v*-win-x64）——
+# stage 之间是新进程，setup 写入的用户 PATH 在本进程不生效，也要在这里补齐，
+# 否则调用 node/pnpm 会报 CommandNotFoundException
+$NodeHome = Join-Path $env:USERPROFILE ".cache\nodejs"
+$NodeDir = Get-ChildItem $NodeHome -Directory -Filter "node-v*-win-x64" -ErrorAction SilentlyContinue |
+    Sort-Object Name -Descending | Select-Object -First 1
+$ExtraPaths = @("$env:USERPROFILE\.cargo\bin") + @($NodeDir.FullName)
+$env:PATH = (($ExtraPaths | Where-Object { $_ }) -join ";") + ";$env:PATH"
+Write-Host "node: $(node -v)"
 
 # 与 Mac 节点同理：宿主 USERPROFILE 持久，把 release 编译产物放在固定目录，
 # 跨构建复用；cargo 按指纹增量编译，commit 变化只会重编变动的 crate

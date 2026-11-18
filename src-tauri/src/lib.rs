@@ -9,6 +9,7 @@ mod commands;
 mod config;
 mod importer;
 mod opener;
+mod shortcut;
 mod tray;
 
 use config::AppState;
@@ -26,6 +27,18 @@ pub fn run() {
         )?;
       }
 
+      // 全局快捷键：触发时呼出/收起托盘弹窗（注册动作在 setup 里按配置执行）
+      app.handle().plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+          .with_handler(|app, _shortcut, event| {
+            // 只在按下瞬间响应一次，抬起不重复触发
+            if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+              shortcut::on_trigger(app);
+            }
+          })
+          .build(),
+      )?;
+
       // 加载/初始化配置并注册为全局状态，命令与托盘逻辑都从这里取数据
       let state = config::init(app.handle())?;
       app.manage(state);
@@ -33,6 +46,11 @@ pub fn run() {
       // 托盘与弹窗都在启动时创建好，之后只做显示/隐藏切换
       tray::create_tray(app.handle())?;
       tray::create_popup_window(app.handle())?;
+
+      // 按配置注册全局快捷键；占用/非法组合只记日志，不阻塞启动
+      if let Err(err) = shortcut::apply(app.handle()) {
+        log::warn!("全局快捷键注册失败：{err}");
+      }
       Ok(())
     })
     .on_window_event(|window, event| match event {
@@ -60,6 +78,7 @@ pub fn run() {
       commands::get_config,
       commands::scan_recent_projects,
       commands::add_project,
+      commands::set_global_shortcut,
       commands::remove_project,
       commands::open_project,
       commands::show_main_window,

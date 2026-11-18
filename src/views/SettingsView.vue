@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useToast } from "@nuxt/ui/composables";
 import { desktop, type DesktopConfig, type DetectedProject } from "../api/desktop";
 
@@ -170,6 +170,114 @@ async function importSelected() {
   }
 }
 
+/* ---------- 全局快捷键 ---------- */
+
+const isRecording = ref(false);
+const recorderRef = ref<HTMLElement | null>(null);
+/** 录入中的组合预览（global-hotkey 格式），null 表示还没按到有效组合 */
+const shortcutPreview = ref<string | null>(null);
+
+/** 平台判定：Super 在 macOS 是 ⌘，Windows 是 Win 键 */
+const isMac = navigator.platform.toUpperCase().includes("MAC");
+
+/** 把 global-hotkey 格式转成平台化展示文案 */
+function formatShortcut(raw: string) {
+  return raw
+    .split("+")
+    .map((t) => (t.toLowerCase() === "super" ? (isMac ? "Cmd" : "Win") : t))
+    .join(" + ");
+}
+
+/** 当前生效组合的展示（null = 默认，"" = 禁用） */
+const shortcutDisplay = computed(() => {
+  const custom = config.value?.globalShortcut;
+  if (custom === "") return "已禁用";
+  return formatShortcut(custom ?? "Super+Shift+P");
+});
+
+async function startRecording() {
+  isRecording.value = true;
+  shortcutPreview.value = null;
+  // 等弹层渲染完再聚焦，否则按键会落到页面上
+  await nextTick();
+  recorderRef.value?.focus();
+}
+
+function stopRecording() {
+  isRecording.value = false;
+  shortcutPreview.value = null;
+}
+
+/** 录入：捕获按键组合转成 global-hotkey 格式；Esc 取消，退格清空重按 */
+function onRecorderKeydown(e: KeyboardEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.key === "Escape") {
+    stopRecording();
+    return;
+  }
+  if (e.key === "Backspace" || e.key === "Delete") {
+    shortcutPreview.value = null;
+    return;
+  }
+  // 主键只接受字母 / 数字 / F1-F12，避免录到方向键等不易解析的键
+  let key: string | null = null;
+  if (/^[a-z0-9]$/i.test(e.key)) key = e.key.toUpperCase();
+  else if (/^F([1-9]|1[0-2])$/.test(e.key)) key = e.key.toUpperCase();
+  if (!key) return;
+  // 修饰键按 Super > Ctrl > Alt > Shift 固定顺序输出，保证字符串可复现
+  const mods: string[] = [];
+  if (e.metaKey) mods.push("Super");
+  if (e.ctrlKey) mods.push("Ctrl");
+  if (e.altKey) mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  // 不带修饰键的组合会抢占裸键，明确拒绝
+  if (mods.length === 0) {
+    shortcutPreview.value = null;
+    return;
+  }
+  shortcutPreview.value = [...mods, key].join("+");
+}
+
+/** 保存录入的组合；失败（冲突/非法）由后端回滚并 toast 原因 */
+async function saveShortcut() {
+  const preview = shortcutPreview.value;
+  if (!preview) return;
+  try {
+    config.value = await desktop.setGlobalShortcut(preview);
+    toast.add({ title: "全局快捷键已更新", color: "success" });
+    stopRecording();
+  } catch (error) {
+    toast.add({
+      title: "设置快捷键失败",
+      description: String(error),
+      color: "error",
+    });
+  }
+}
+
+/** 恢复平台默认组合 */
+async function resetShortcut() {
+  try {
+    config.value = await desktop.setGlobalShortcut(null);
+    toast.add({ title: "已恢复默认快捷键", color: "success" });
+    stopRecording();
+  } catch (error) {
+    toast.add({ title: "操作失败", description: String(error), color: "error" });
+  }
+}
+
+/** 禁用全局快捷键（仍可点托盘图标呼出） */
+async function disableShortcut() {
+  try {
+    config.value = await desktop.setGlobalShortcut("");
+    toast.add({ title: "全局快捷键已禁用", color: "success" });
+    stopRecording();
+  } catch (error) {
+    toast.add({ title: "操作失败", description: String(error), color: "error" });
+  }
+}
+
 let offConfigChanged: (() => void) | null = null;
 
 onMounted(async () => {
@@ -308,6 +416,65 @@ export default { name: "SettingsView" };
           </span>
         </li>
       </ul>
+    </UCard>
+
+    <!-- 全局快捷键 -->
+    <UCard>
+      <template #header>
+        <p class="font-medium">全局快捷键</p>
+      </template>
+      <div class="space-y-4">
+        <div class="flex items-center gap-3">
+          <span class="text-sm text-muted">呼出最近项目弹窗</span>
+          <UKbd v-if="!isRecording" size="md">{{ shortcutDisplay }}</UKbd>
+          <!-- 录入态：聚焦的方块捕获按键组合 -->
+          <div
+            v-else
+            ref="recorderRef"
+            tabindex="0"
+            class="flex h-8 min-w-40 items-center justify-center rounded-md border border-primary px-2 text-sm outline-none"
+            @keydown="onRecorderKeydown"
+            @blur="stopRecording"
+          >
+            <span v-if="shortcutPreview" class="font-medium">{{
+              formatShortcut(shortcutPreview)
+            }}</span>
+            <span v-else class="text-xs text-muted">按下组合键…（Esc 取消）</span>
+          </div>
+        </div>
+        <p class="text-xs text-muted">
+          平台默认 {{ formatShortcut("Super+Shift+P") }}；组合需包含修饰键，支持字母 / 数字 /
+          F1-F12。
+          注册失败通常意味着组合被其他应用占用。
+        </p>
+        <div class="flex justify-end gap-2">
+          <template v-if="isRecording">
+            <UButton size="sm" color="neutral" variant="ghost" @click="stopRecording">取消</UButton>
+            <UButton
+              size="sm"
+              icon="i-lucide-check"
+              :disabled="!shortcutPreview"
+              @click="saveShortcut"
+            >
+              保存
+            </UButton>
+          </template>
+          <template v-else>
+            <UButton
+              v-if="config?.globalShortcut === ''"
+              size="sm"
+              variant="soft"
+              @click="resetShortcut"
+            >
+              恢复默认
+            </UButton>
+            <UButton v-else size="sm" variant="soft" @click="disableShortcut">禁用</UButton>
+            <UButton size="sm" variant="soft" icon="i-lucide-pencil-line" @click="startRecording">
+              修改
+            </UButton>
+          </template>
+        </div>
+      </div>
     </UCard>
 
     <!-- 导入确认弹窗：勾选要导入的项目并确认打开工具 -->

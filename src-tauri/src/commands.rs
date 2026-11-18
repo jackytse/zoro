@@ -170,6 +170,32 @@ pub fn open_project(
   Ok(snapshot)
 }
 
+/// 设置全局快捷键。
+/// - `None`：恢复平台默认（macOS ⌘+Shift+P / Windows Win+Shift+P）；
+/// - `Some("")`：禁用；
+/// - `Some(组合)`：自定义，如 "Super+Shift+P"（global-hotkey 解析格式）。
+///
+/// 注册成功才算生效；失败时配置回滚并把原因抛给前端 toast。
+#[tauri::command]
+pub fn set_global_shortcut(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  shortcut: Option<String>,
+) -> Result<Config, String> {
+  let previous = state.config.lock().unwrap().global_shortcut.clone();
+  state.config.lock().unwrap().global_shortcut = shortcut;
+
+  if let Err(err) = crate::shortcut::apply(&app) {
+    // 回滚配置并恢复旧注册（apply 内部已尽量恢复旧组合）
+    state.config.lock().unwrap().global_shortcut = previous;
+    return Err(err);
+  }
+
+  config::save(&state)?;
+  broadcast(&app);
+  Ok(state.config.lock().unwrap().clone())
+}
+
 /// 显示并聚焦主窗口（弹窗底部的「设置」入口）。
 #[tauri::command]
 pub fn show_main_window(app: AppHandle) -> Result<(), String> {

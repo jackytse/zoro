@@ -52,6 +52,10 @@ pub struct Project {
 pub struct Config {
   pub tools: Vec<Tool>,
   pub projects: Vec<Project>,
+  /// 全局快捷键（global-hotkey 格式，如 "Super+Shift+P"）。
+  /// None = 平台默认（⌘+Shift+P / Win+Shift+P）；Some("") = 禁用。
+  #[serde(default)]
+  pub global_shortcut: Option<String>,
 }
 
 /// 全局共享状态：配置本体 + 文件路径 + 托盘弹窗的显示时序记录。
@@ -62,6 +66,8 @@ pub struct AppState {
   pub popup_last_hidden: Mutex<Option<Instant>>,
   /// 最近一次弹窗被显示的时间，用于过滤 show 后瞬间出现的假失焦
   pub popup_last_shown: Mutex<Option<Instant>>,
+  /// 当前实际注册成功的全局快捷键（global-hotkey 格式），None 表示未注册（禁用态）
+  pub active_shortcut: Mutex<Option<String>>,
 }
 
 impl Config {
@@ -104,6 +110,7 @@ impl Config {
         },
       ],
       projects: Vec::new(),
+      global_shortcut: None,
     }
   }
 }
@@ -153,6 +160,7 @@ pub fn init(app: &tauri::AppHandle) -> Result<AppState, Box<dyn std::error::Erro
     config_path,
     popup_last_hidden: Mutex::new(None),
     popup_last_shown: Mutex::new(None),
+    active_shortcut: Mutex::new(None),
   };
   // 首次运行时把默认配置写盘，让设置页与托盘读到同一份来源
   save(&state)?;

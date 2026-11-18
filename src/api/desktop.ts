@@ -30,6 +30,8 @@ export interface Project {
 export interface DesktopConfig {
   tools: Tool[];
   projects: Project[];
+  /** 全局快捷键；null = 平台默认，"" = 禁用，其余为组合字符串（如 "Super+Shift+P"） */
+  globalShortcut: string | null;
 }
 
 /** 从本机开发工具记录里探测到的候选项目 */
@@ -54,6 +56,12 @@ export const desktop = {
   removeProject: (id: string) => invoke<DesktopConfig>("remove_project", { id }),
   /** 打开项目；成功后后端会隐藏弹窗并广播 config-changed */
   openProject: (id: string) => invoke<DesktopConfig>("open_project", { id }),
+  /**
+   * 设置全局快捷键；null = 恢复平台默认，"" = 禁用。
+   * 失败时 reject 中文错误（组合冲突 / 无法解析）。
+   */
+  setGlobalShortcut: (shortcut: string | null) =>
+    invoke<DesktopConfig>("set_global_shortcut", { shortcut }),
   showMainWindow: () => invoke<void>("show_main_window"),
   hideTrayPopup: () => invoke<void>("hide_tray_popup"),
   quitApp: () => invoke<void>("quit_app"),

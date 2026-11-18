@@ -23,3 +23,5 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.12.5", features = ["tray-icon", "image-png"] }
 tauri-plugin-log = "2"
+# 全局快捷键：应用失焦也能响应（触发后呼出托盘弹窗）
+tauri-plugin-global-shortcut = "2"

@@ -43,49 +43,70 @@ if ($Ref -like "v*") {
     Write-Host "OK: tag 与应用版本一致"
 }
 
-# ---------- 2. 打包（msi + nsis） ----------
-# tauri build 会先跑 beforeBuildCommand（pnpm build）再编译 release；
-# --bundles msi,nsis 同时产出企业部署用的 msi 与普通安装的 setup.exe。
+# ---------- 2. 打包（nsis 必选 + msi 可选） ----------
+# tauri build 会先跑 beforeBuildCommand（pnpm build）再编译 release。
 # 注意 PowerShell 会把裸逗号 `msi,nsis` 当数组语法展开，tauri 收到
 # "msi nsis" 直接报 invalid value——所以用重复 flag 的写法绕开解析差异。
+#
+# nsis / msi 分两次打包，原因是 WiX 的 candle.exe 在部分构建机上会
+# 因安全软件拦截或缺运行库而静默失败（报错信息为空，无从排查），
+# 若绑在一条命令里会让整个发布失败。因此：nsis（Windows 通用安装器）
+# 作为必选产物，失败即终止；msi（企业部署场景）作为可选产物，
+# 失败只告警并跳过，不阻塞 nsis 附件发布。
 # 先清掉 bundle 输出目录：编译缓存卷里会残留旧版本的安装包，
 # 不清理的话后面的产物收集可能挑中上一次的旧包。
 $BundleDir = Join-Path $TargetRoot "release\bundle"
 if (Test-Path $BundleDir) { Remove-Item -Recurse -Force $BundleDir }
 $StartAt = [DateTime]::Now
-pnpm exec tauri build --bundles msi --bundles nsis
+pnpm exec tauri build --bundles nsis
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "== FAIL: nsis 打包失败（tauri 退出码 $LASTEXITCODE）" -ForegroundColor Red
+    exit 1
+}
+$HasMsi = $false
+pnpm exec tauri build --bundles msi
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "WARN: msi 打包失败（WiX candle 兼容性问题？），本次跳过 msi，仅发布 nsis" -ForegroundColor Yellow
+} else {
+    $HasMsi = $true
+}
 Write-Host ("打包耗时: {0}s" -f ([int]([DateTime]::Now - $StartAt).TotalSeconds))
 
 # ---------- 3. 产物定位与校验 ----------
 # 产物落盘位置跟随 CARGO_TARGET_DIR（Windows 节点用 USERPROFILE 缓存增量编译）
-$MsiDir = Join-Path $BundleDir "msi"
 $NsisDir = Join-Path $BundleDir "nsis"
-$Msi = Get-ChildItem -Path $MsiDir -Filter "*.msi" | Select-Object -First 1
-$Nsis = Get-ChildItem -Path $NsisDir -Filter "*.exe" | Select-Object -First 1
-if (-not $Msi) { Write-Host "== FAIL: 未找到 msi 产物" -ForegroundColor Red; exit 1 }
+$Nsis = Get-ChildItem -Path $NsisDir -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $Nsis) { Write-Host "== FAIL: 未找到 nsis 产物" -ForegroundColor Red; exit 1 }
-foreach ($f in @($Msi, $Nsis)) {
-    if ($f.Length -le 0) { Write-Host "== FAIL: 产物为空: $($f.FullName)" -ForegroundColor Red; exit 1 }
-    Write-Host ("产物: {0} ({1:N1} MB)" -f $f.FullName, ($f.Length / 1MB))
+if ($Nsis.Length -le 0) { Write-Host "== FAIL: 产物为空: $($Nsis.FullName)" -ForegroundColor Red; exit 1 }
+Write-Host ("产物: {0} ({1:N1} MB)" -f $Nsis.FullName, ($Nsis.Length / 1MB))
+if ($HasMsi) {
+    $Msi = Get-ChildItem -Path (Join-Path $BundleDir "msi") -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $Msi) { $HasMsi = $false }
+    else {
+        if ($Msi.Length -le 0) { Write-Host "== FAIL: 产物为空: $($Msi.FullName)" -ForegroundColor Red; exit 1 }
+        Write-Host ("产物: {0} ({1:N1} MB)" -f $Msi.FullName, ($Msi.Length / 1MB))
+    }
 }
 
 # ---------- 4. 发布：建 release 并上传附件 ----------
 # 仅 tag_push（tag 名形如 vX.Y.Z）时上传；非 tag 构建只验证链路。
-# 附件四件套：msi、nsis setup.exe 及各自 sha256，统一加 OS/架构 标识命名
-# （tauri 默认名只有架构与语言，如 zoro_0.1.3_x64_en-US.msi）。
+# 附件按实际产出收集：nsis setup.exe 必有，msi 视打包结果，各带 sha256；
+# 统一加 OS/架构 标识命名（tauri 默认名只有架构与语言，如 *_x64_en-US.msi）。
 if ($Ref -like "v*") {
     $AssetDir = "release-assets"
     if (Test-Path $AssetDir) { Remove-Item -Recurse -Force $AssetDir }
     New-Item -ItemType Directory -Path $AssetDir | Out-Null
 
-    # 统一命名：zoro_<ver>_windows_amd64.msi / zoro_<ver>_windows_amd64-setup.exe
-    $AssetMsi = "zoro_${Version}_windows_amd64.msi"
-    $AssetNsis = "zoro_${Version}_windows_amd64-setup.exe"
-    Copy-Item $Msi.FullName (Join-Path $AssetDir $AssetMsi)
-    Copy-Item $Nsis.FullName (Join-Path $AssetDir $AssetNsis)
+    # 统一命名：zoro_<ver>_windows_amd64-setup.exe / zoro_<ver>_windows_amd64.msi
+    $Assets = @("zoro_${Version}_windows_amd64-setup.exe")
+    Copy-Item $Nsis.FullName (Join-Path $AssetDir $Assets[0])
+    if ($HasMsi) {
+        $Assets += "zoro_${Version}_windows_amd64.msi"
+        Copy-Item $Msi.FullName (Join-Path $AssetDir $Assets[-1])
+    }
 
     # sha256 指纹留档，格式与 shasum -a 256 输出对齐（小写哈希 + 两个空格 + 文件名）
-    foreach ($name in @($AssetMsi, $AssetNsis)) {
+    foreach ($name in $Assets) {
         $Path = Join-Path $AssetDir $name
         $Hash = (Get-FileHash -Algorithm SHA256 -Path $Path).Hash.ToLower()
         "$Hash  $name" | Out-File -FilePath "$Path.sha256" -Encoding ascii
@@ -101,7 +122,9 @@ if ($Ref -like "v*") {
         exit 1
     }
     Write-Host "使用 bash: $BashExe"
-    & $BashExe ci/upload-release.sh "$AssetDir/$AssetMsi" "$AssetDir/$AssetMsi.sha256" "$AssetDir/$AssetNsis" "$AssetDir/$AssetNsis.sha256"
+    $UploadFiles = @()
+    foreach ($name in $Assets) { $UploadFiles += "$AssetDir/$name"; $UploadFiles += "$AssetDir/$name.sha256" }
+    & $BashExe ci/upload-release.sh @UploadFiles
     if ($LASTEXITCODE -ne 0) {
         Write-Host "== FAIL: release 上传失败" -ForegroundColor Red
         exit 1
@@ -110,4 +133,5 @@ if ($Ref -like "v*") {
     Write-Host "非 tag 构建（$Ref），跳过 release 上传"
 }
 
-Write-Host "== OK: Windows 发布测试通过（msi / nsis） =="
+$BundleKinds = if ($HasMsi) { "msi / nsis" } else { "nsis（msi 跳过）" }
+Write-Host "== OK: Windows 发布测试通过（$BundleKinds） =="

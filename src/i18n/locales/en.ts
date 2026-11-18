@@ -132,5 +132,19 @@ export default {
     shortcutReset: "Shortcut reset to default",
     shortcutDisabledToast: "Global shortcut disabled",
     actionFailed: "Operation failed",
+
+    // About & updates
+    aboutSection: "About & Updates",
+    currentVersion: "Current version",
+    currentVersionDesc: "Installers are hosted on GitHub Releases; updates are minisign verified",
+    checkUpdate: "Check for updates",
+    upToDate: "You're up to date",
+    newVersionFound: "New version v{version} available",
+    updateNow: "Update now",
+    downloading: "Downloading {progress}",
+    installedRestart: "Update installed, restart to apply",
+    restart: "Restart app",
+    updateCheckFailed: "Failed to check for updates",
+    updateInstallFailed: "Failed to download or install the update",
   },
 } as const;

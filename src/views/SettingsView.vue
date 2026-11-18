@@ -7,6 +7,7 @@ import { applyLocale, resolveLocale, LOCALE_LABELS, type AppLocale } from "../i1
 import ToolIcon from "../components/ToolIcon.vue";
 import OverlayScrollbar from "../components/OverlayScrollbar.vue";
 import { useNotify } from "../composables/useNotify";
+import { useUpdater } from "../composables/useUpdater";
 import { formatRelativeTime } from "../utils/time";
 
 const notify = useNotify();
@@ -440,6 +441,92 @@ async function toggleAutostart(enabled: boolean) {
   }
 }
 
+/* ---------- 通用设置：关于与更新 ---------- */
+
+/**
+ * 解构出来的是 ref，在模板里自动解包；
+ * checkForUpdate / downloadAndInstall 返回 Promise，用包装函数统一弹错误 toast，
+ * 状态行本身只展示阶段语义（已是最新 / 发现新版本 / 下载进度 / 待重启）
+ */
+const {
+  phase: updatePhase,
+  currentVersion,
+  newVersion: updateNewVersion,
+  progress: updateProgress,
+  errorMessage: updateError,
+  isChecking,
+  loadCurrentVersion,
+  checkForUpdate,
+  downloadAndInstall,
+  restartApp,
+  formatMB,
+} = useUpdater();
+
+/** 检测更新；失败时状态行给结论、toast 给原因 */
+async function handleCheckUpdate() {
+  await checkForUpdate();
+  if (updatePhase.value === "error") {
+    notify("error", t("settings.updateCheckFailed"), { description: updateError.value });
+  }
+}
+
+/** 确认后下载安装；失败时同样状态行 + toast 双通道 */
+async function handleInstallUpdate() {
+  await downloadAndInstall();
+  if (updatePhase.value === "error") {
+    notify("error", t("settings.updateInstallFailed"), { description: updateError.value });
+  }
+}
+
+/**
+ * 状态行文案；null 表示该阶段（初始态）不展示状态行。
+ * 下载中拼 MB 进度：总大小拿不到时只显示已下载量
+ */
+const updateStatusText = computed<string | null>(() => {
+  switch (updatePhase.value) {
+    case "latest":
+      return t("settings.upToDate");
+    case "available":
+      return t("settings.newVersionFound", { version: updateNewVersion.value });
+    case "downloading": {
+      const done = formatMB(updateProgress.value.downloaded);
+      const total = updateProgress.value.total;
+      return t("settings.downloading", {
+        progress: total ? `${done} / ${formatMB(total)} MB` : `${done} MB`,
+      });
+    }
+    case "ready":
+      return t("settings.installedRestart");
+    case "error":
+      return updateError.value;
+    default:
+      return null;
+  }
+});
+
+/** 状态行图标：随阶段变化，颜色区分正常/新版本/出错 */
+const updateStatusIcon = computed(() => {
+  switch (updatePhase.value) {
+    case "latest":
+      return "i-lucide-circle-check";
+    case "available":
+    case "downloading":
+    case "ready":
+      return "i-lucide-arrow-up-circle";
+    default:
+      return "i-lucide-circle-alert";
+  }
+});
+
+/** 图标配色：最新绿色、有更新/下载/待重启主色、出错红色 */
+const updateStatusClass = computed(() =>
+  updatePhase.value === "error"
+    ? "text-error"
+    : updatePhase.value === "latest"
+      ? "text-success"
+      : "text-primary",
+);
+
 let offConfigChanged: (() => void) | null = null;
 
 /* ---------- 通用设置：默认终端工具 ---------- */
@@ -481,6 +568,8 @@ async function setDefaultTerminal(value: string) {
 
 onMounted(async () => {
   await loadConfig();
+  // 当前版本号用于「关于与更新」卡片展示；失败只降级为占位符
+  void loadCurrentVersion();
   // 扫描终端工具用于「默认终端」下拉；失败不阻塞页面，下拉退化为仅自动推荐
   try {
     terminalTools.value = await desktop.scanTerminalTools();
@@ -682,6 +771,60 @@ export default { name: "SettingsView" };
             :aria-label="t('settings.defaultTerminal')"
             @update:model-value="setDefaultTerminal"
           />
+        </div>
+      </UCard>
+
+      <!-- 关于与更新：当前版本 + 手动检测更新（应用内自动升级入口） -->
+      <UCard>
+        <template #header>
+          <p class="font-medium">{{ t("settings.aboutSection") }}</p>
+        </template>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">{{ t("settings.currentVersion") }}</p>
+            <p class="mt-0.5 text-xs text-muted">{{ t("settings.currentVersionDesc") }}</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <!-- 版本号来自 tauri.conf.json，等宽数字更整齐 -->
+            <span class="font-mono text-sm text-dimmed">{{ currentVersion || "—" }}</span>
+            <UButton
+              size="sm"
+              variant="soft"
+              icon="i-lucide-refresh-cw"
+              :loading="isChecking"
+              :aria-label="t('settings.checkUpdate')"
+              @click="handleCheckUpdate"
+            >
+              {{ t("settings.checkUpdate") }}
+            </UButton>
+          </div>
+        </div>
+        <!-- 动态状态行：检测/下载/出错后的结果与后续动作 -->
+        <div
+          v-if="updateStatusText"
+          class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6"
+        >
+          <div class="flex min-w-0 items-center gap-2">
+            <UIcon :name="updateStatusIcon" class="size-4 shrink-0" :class="updateStatusClass" />
+            <!-- 错误信息可能很长：截断展示，完整原因在 toast 里 -->
+            <p class="truncate text-sm">{{ updateStatusText }}</p>
+          </div>
+          <UButton
+            v-if="updatePhase === 'available'"
+            size="sm"
+            icon="i-lucide-arrow-down-to-line"
+            @click="handleInstallUpdate"
+          >
+            {{ t("settings.updateNow") }}
+          </UButton>
+          <UButton
+            v-else-if="updatePhase === 'ready'"
+            size="sm"
+            icon="i-lucide-rotate-cw"
+            @click="restartApp"
+          >
+            {{ t("settings.restart") }}
+          </UButton>
         </div>
       </UCard>
     </template>

@@ -128,5 +128,19 @@ export default {
     shortcutReset: "已恢復預設快捷鍵",
     shortcutDisabledToast: "全域快捷鍵已停用",
     actionFailed: "操作失敗",
+
+    // 關於與更新
+    aboutSection: "關於與更新",
+    currentVersion: "目前版本",
+    currentVersionDesc: "應用安裝包由 GitHub Release 託管，更新包經 minisign 簽章校驗",
+    checkUpdate: "檢測更新",
+    upToDate: "已是最新版本",
+    newVersionFound: "發現新版本 v{version}",
+    updateNow: "立即更新",
+    downloading: "下載中 {progress}",
+    installedRestart: "更新已安裝，重啟應用生效",
+    restart: "重啟應用",
+    updateCheckFailed: "檢測更新失敗",
+    updateInstallFailed: "下載或安裝更新失敗",
   },
 } as const;

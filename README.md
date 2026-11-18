@@ -73,3 +73,7 @@ vite.config.ts          # Vite+ 统一配置（插件 / lint / fmt / staged）
 - Nuxt UI 会在项目根目录生成 `auto-imports.d.ts` 与 `components.d.ts`（已 gitignore），首次 `pnpm dev` 或 `pnpm build` 后产生，`vue-tsc` 依赖它们做类型检查。
 - `src-tauri/tauri.conf.json` 的 `build.beforeDevCommand` 用的是 `pnpm dev:desktop` 而非 `vp dev`：一是即使全局 `vp` 不在 PATH（IDE 内置终端常见）也能靠 `node_modules/.bin/vp` 兜底，二是端口与浏览器版 dev server 隔离开。
 - 图标使用 `@iconify-json/lucide` 本地集合，桌面端离线可用。
+
+## License
+
+[MIT](./LICENSE) © 2026 jackytse

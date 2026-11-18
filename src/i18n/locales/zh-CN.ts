@@ -140,5 +140,19 @@ export default {
     shortcutReset: "已恢复默认快捷键",
     shortcutDisabledToast: "全局快捷键已禁用",
     actionFailed: "操作失败",
+
+    // 关于与更新
+    aboutSection: "关于与更新",
+    currentVersion: "当前版本",
+    currentVersionDesc: "应用安装包由 GitHub Release 托管，更新包经 minisign 签名校验",
+    checkUpdate: "检测更新",
+    upToDate: "已是最新版本",
+    newVersionFound: "发现新版本 v{version}",
+    updateNow: "立即更新",
+    downloading: "下载中 {progress}",
+    installedRestart: "更新已安装，重启应用生效",
+    restart: "重启应用",
+    updateCheckFailed: "检测更新失败",
+    updateInstallFailed: "下载或安装更新失败",
   },
 } as const;

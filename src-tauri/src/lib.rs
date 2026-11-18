@@ -82,6 +82,15 @@ pub fn run() {
       // 原生目录选择对话框（添加项目时浏览目录用）
       app.handle().plugin(tauri_plugin_dialog::init())?;
 
+      // 应用自动更新：设置页「检测更新」经 updater 插件拉取签名更新包，
+      // 端点与公钥配置在 tauri.conf.json 的 plugins.updater 下；
+      // 更新产物（latest.json + 各平台带 .sig 的包）由 GitHub Actions 发布时生成
+      app
+        .handle()
+        .plugin(tauri_plugin_updater::Builder::new().build())?;
+      // 更新安装完成后的重启走 process 插件的 relaunch 命令
+      app.handle().plugin(tauri_plugin_process::init())?;
+
       // 加载/初始化配置并注册为全局状态，命令与托盘逻辑都从这里取数据
       let state = config::init(app.handle())?;
       app.manage(state);

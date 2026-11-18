@@ -3,7 +3,7 @@ name = "app"
 version = "0.1.4"
 description = "A Tauri App"
 authors = ["you"]
-license = ""
+license = "MIT"
 repository = ""
 edition = "2024"
 rust-version = "1.90"
@@ -31,6 +31,10 @@ tauri-plugin-autostart = "2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 # 原生目录选择对话框（添加项目时浏览目录）
 tauri-plugin-dialog = "2"
+# 应用自动更新：设置页「检测更新」拉取签名更新包并静默安装
+tauri-plugin-updater = "2"
+# 配套 process：更新安装完成后重启应用使新版本生效
+tauri-plugin-process = "2"
 
 # macOS：直接访问 NSStatusItem / NSScreen，取托盘图标的权威位置，
 # 解决多显示器混合缩放下按几何推算定位弹窗失效的问题

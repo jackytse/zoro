@@ -155,9 +155,19 @@ pub fn run() {
     .build(tauri::generate_context!())
     .expect("error while building tauri application")
     .run(|app, event| {
-      // macOS：点击 Dock 图标时重新显示主窗口（此时它可能处于隐藏状态）
-      if let RunEvent::Reopen { .. } = event {
-        tray::show_main_window(app);
+      // macOS / Windows 才有 Reopen 变体（点 Dock / 任务栏图标唤回窗口）；
+      // Linux 上 RunEvent 没有这个变体，必须按平台裁掉，否则 Linux 编译不过
+      // （CI 的 deb 打包链路就是 Linux）。
+      #[cfg(any(target_os = "macos", windows))]
+      {
+        if let RunEvent::Reopen { .. } = event {
+          tray::show_main_window(app);
+        }
+      }
+      // 其他平台没有需要处理的运行期事件，显式消费参数避免未使用告警
+      #[cfg(not(any(target_os = "macos", windows)))]
+      {
+        let _ = (app, event);
       }
     });
 }

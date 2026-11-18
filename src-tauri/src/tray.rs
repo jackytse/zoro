@@ -184,6 +184,10 @@ fn position_near_tray(
   window: &tauri::WebviewWindow,
   rect: Rect,
 ) -> tauri::Result<()> {
+  // 非 macOS 走几何推算，不需要读托盘内部对象；显式丢弃参数避免未使用告警
+  #[cfg(not(target_os = "macos"))]
+  let _ = tray;
+
   // 窗口逻辑尺寸（CSS px）：跨屏移动时不变，用它参与坐标运算才能保证
   // 在不同缩放的屏上都得到正确的视觉大小
   let window_size = window.outer_size().unwrap_or_else(|_| (372, 460).into());

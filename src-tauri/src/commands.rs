@@ -333,6 +333,29 @@ pub fn set_terminal_mode(
   Ok(state.config.lock().unwrap().clone())
 }
 
+/// 设置界面主题："light" / "dark"，None = 跟随系统。
+/// 保存后广播 config-changed（前端两个窗口同步应用到 <html>）。
+#[tauri::command]
+pub fn set_theme(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  theme: Option<String>,
+) -> Result<Config, String> {
+  // 只接受合法值（或 None），避免把垃圾数据写进配置文件
+  if let Some(t) = &theme {
+    if t != "light" && t != "dark" {
+      return Err(format!("不支持的主题：{t}"));
+    }
+  }
+  {
+    let mut cfg = state.config.lock().unwrap();
+    cfg.theme = theme;
+  }
+  config::save(&state)?;
+  broadcast(&app);
+  Ok(state.config.lock().unwrap().clone())
+}
+
 /// 设置界面语言："zh-CN" / "zh-TW" / "en"，None = 跟随系统语言。
 /// 保存后广播 config-changed（前端两窗口热切换），并按新语言重建托盘菜单。
 #[tauri::command]

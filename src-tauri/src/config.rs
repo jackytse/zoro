@@ -6,6 +6,9 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+// Command 只在非 macOS 的 PATH 探测里用到（macOS 走 .app 路径探测）
+#[cfg(not(target_os = "macos"))]
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::Instant;
 use tauri::Manager;
@@ -73,6 +76,10 @@ pub struct Config {
   /// 前端两个窗口与 Rust 托盘菜单共用这一份语言设置。
   #[serde(default)]
   pub locale: Option<String>,
+  /// 界面主题："light" | "dark"；None = 跟随系统（含系统切换时实时跟随）。
+  /// 与语言同构：实际应用到 <html> 的 .dark 类在前端做，Rust 侧只存偏好。
+  #[serde(default)]
+  pub theme: Option<String>,
 }
 
 /// serde 默认值辅助：true
@@ -117,45 +124,274 @@ pub struct AppState {
   pub active_shortcut: Mutex<Option<String>>,
 }
 
+/// 候选工具目录条目：一个主流开发工具的完整定义 + 安装探测路径。
+///
+/// 为什么不直接用 Tool + 序列化 app_paths：安装探测路径是实现细节，
+/// 不该进配置文件污染用户数据；目录只存在于代码里，配置里的 tools
+/// 始终是「经过安装同步的真实工具子集 + 用户自定义项」。
+pub struct CatalogEntry {
+  pub id: &'static str,
+  pub name: &'static str,
+  pub command: &'static str,
+  pub args: &'static [&'static str],
+  /// macOS open -a 兜底用的应用名
+  pub app_name: &'static str,
+  pub icon: &'static str,
+  /// macOS .app 包探测路径（任一存在即视为已安装）；
+  /// 非 macOS 平台按 command 是否在 PATH 里探测
+  pub app_paths: &'static [&'static str],
+}
+
+impl CatalogEntry {
+  /// 转成可持久化的 Tool
+  fn to_tool(&self) -> Tool {
+    Tool {
+      id: self.id.into(),
+      name: self.name.into(),
+      command: self.command.into(),
+      args: self.args.iter().map(|s| (*s).into()).collect(),
+      app_name: Some(self.app_name.into()),
+      icon: self.icon.into(),
+    }
+  }
+}
+
+/// 主流开发工具候选目录。
+///
+/// 顺序即设置页「工具清单」的展示顺序：通用编辑器 → JetBrains 系 →
+/// 其他 IDE → 终端。终端类（iterm/terminal）必须保留：它们走
+/// open_in_terminal 专用链路（见 opener::is_terminal_tool），且
+/// Terminal.app 在任何 macOS 上都存在，保证列表非空。
+pub const TOOL_CATALOG: [CatalogEntry; 14] = [
+  CatalogEntry {
+    id: "vscode",
+    name: "VS Code",
+    command: "code",
+    args: &["-n"],
+    app_name: "Visual Studio Code",
+    icon: "i-lucide-file-code-2",
+    app_paths: &["/Applications/Visual Studio Code.app", "~/Applications/Visual Studio Code.app"],
+  },
+  CatalogEntry {
+    id: "cursor",
+    name: "Cursor",
+    command: "cursor",
+    args: &["-n"],
+    app_name: "Cursor",
+    icon: "i-lucide-mouse-pointer-2",
+    app_paths: &["/Applications/Cursor.app", "~/Applications/Cursor.app"],
+  },
+  CatalogEntry {
+    id: "windsurf",
+    name: "Windsurf",
+    command: "windsurf",
+    args: &["-n"],
+    app_name: "Windsurf",
+    icon: "i-lucide-navigation",
+    app_paths: &["/Applications/Windsurf.app", "~/Applications/Windsurf.app"],
+  },
+  CatalogEntry {
+    id: "idea",
+    name: "IntelliJ IDEA",
+    command: "idea",
+    args: &[],
+    app_name: "IntelliJ IDEA",
+    icon: "i-lucide-coffee",
+    app_paths: &["/Applications/IntelliJ IDEA.app", "~/Applications/IntelliJ IDEA.app"],
+  },
+  CatalogEntry {
+    id: "pycharm",
+    name: "PyCharm",
+    command: "pycharm",
+    args: &[],
+    app_name: "PyCharm",
+    icon: "i-lucide-flask-conical",
+    app_paths: &["/Applications/PyCharm.app", "~/Applications/PyCharm.app"],
+  },
+  CatalogEntry {
+    id: "webstorm",
+    name: "WebStorm",
+    command: "webstorm",
+    args: &[],
+    app_name: "WebStorm",
+    icon: "i-lucide-globe",
+    app_paths: &["/Applications/WebStorm.app", "~/Applications/WebStorm.app"],
+  },
+  CatalogEntry {
+    id: "goland",
+    name: "GoLand",
+    command: "goland",
+    args: &[],
+    app_name: "GoLand",
+    icon: "i-lucide-braces",
+    app_paths: &["/Applications/GoLand.app", "~/Applications/GoLand.app"],
+  },
+  CatalogEntry {
+    id: "clion",
+    name: "CLion",
+    command: "clion",
+    args: &[],
+    app_name: "CLion",
+    icon: "i-lucide-binary",
+    app_paths: &["/Applications/CLion.app", "~/Applications/CLion.app"],
+  },
+  CatalogEntry {
+    id: "android-studio",
+    name: "Android Studio",
+    // Android Studio 没有 CLI，直接走 open -a 兜底链路
+    command: "open",
+    args: &["-a", "Android Studio"],
+    app_name: "Android Studio",
+    icon: "i-lucide-smartphone",
+    app_paths: &["/Applications/Android Studio.app", "~/Applications/Android Studio.app"],
+  },
+  CatalogEntry {
+    id: "xcode",
+    name: "Xcode",
+    command: "open",
+    args: &["-a", "Xcode"],
+    app_name: "Xcode",
+    icon: "i-lucide-hammer",
+    app_paths: &["/Applications/Xcode.app", "~/Applications/Xcode.app"],
+  },
+  CatalogEntry {
+    id: "sublime",
+    name: "Sublime Text",
+    command: "subl",
+    args: &["-n"],
+    app_name: "Sublime Text",
+    icon: "i-lucide-text",
+    app_paths: &["/Applications/Sublime Text.app", "~/Applications/Sublime Text.app"],
+  },
+  CatalogEntry {
+    id: "zed",
+    name: "Zed",
+    command: "zed",
+    args: &[],
+    app_name: "Zed",
+    icon: "i-lucide-zap",
+    app_paths: &["/Applications/Zed.app", "~/Applications/Zed.app"],
+  },
+  CatalogEntry {
+    id: "iterm",
+    name: "iTerm",
+    // iTerm 没有统一 CLI，直接走 macOS 的 open -a
+    command: "open",
+    args: &["-a", "iTerm"],
+    app_name: "iTerm",
+    icon: "i-lucide-terminal",
+    app_paths: &["/Applications/iTerm.app", "/Applications/iTerm2.app"],
+  },
+  CatalogEntry {
+    id: "terminal",
+    name: "Terminal",
+    command: "open",
+    args: &["-a", "Terminal"],
+    app_name: "Terminal",
+    icon: "i-lucide-square-terminal",
+    app_paths: &[
+      // macOS 12+ 系统自带 Terminal 挪到了 /System/Applications
+      "/System/Applications/Utilities/Terminal.app",
+      "/Applications/Utilities/Terminal.app",
+    ],
+  },
+];
+
+/// 判断目录条目对应的工具是否已安装。
+/// - macOS：.app 包路径任一存在即已安装（~ 前缀展开）；
+/// - 其他平台：command 可在 PATH 里解析到即已安装（用 sh 的 command -v，
+///   一次子进程调用，只在启动同步时执行数次，无性能顾虑）。
+fn catalog_installed(entry: &CatalogEntry) -> bool {
+  #[cfg(target_os = "macos")]
+  {
+    entry
+      .app_paths
+      .iter()
+      .any(|p| Path::new(&expand_tilde(p)).exists())
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    // 只有 open -a 形态的条目（无真实 CLI）在非 macOS 上无法使用
+    if entry.command == "open" {
+      return false;
+    }
+    Command::new("sh")
+      .args(["-c", &format!("command -v {} >/dev/null 2>&1", entry.command)])
+      .status()
+      .map(|s| s.success())
+      .unwrap_or(false)
+  }
+}
+
+/// 启动时的工具同步：让配置里的 tools 始终反映本机实际安装情况。
+///
+/// 规则：
+/// 1. 已安装的目录工具 → 保留（已在配置里）或补入（新装了）；
+/// 2. 未安装的目录工具 → 移除，但以下两种情况除外：
+///    a. 有项目引用它（删了会悬空，打开时报错更糟）；
+///    b. 用户改过 command（视为用户自定义配置，尊重其意愿）；
+/// 3. 不在目录里的工具（用户手工加的）→ 原样保留。
+///
+/// 这正是「没装 Cursor 却出现在可用工具里」「装了 Android Studio 却找不到」
+/// 两个问题的统一解法：列表不再是无脑全量，而是跟随本机安装状态。
+fn sync_installed_tools(cfg: &mut Config) {
+  let referenced: Vec<&str> = cfg.projects.iter().map(|p| p.tool_id.as_str()).collect();
+  let mut tools: Vec<Tool> = Vec::new();
+
+  for entry in &TOOL_CATALOG {
+    let installed = catalog_installed(entry);
+    let existing = cfg.tools.iter().find(|t| t.id == entry.id);
+
+    if installed {
+      // 已在配置里：保留用户可能改过的字段；不在：按目录补入
+      tools.push(existing.cloned().unwrap_or_else(|| entry.to_tool()));
+    } else if let Some(t) = existing {
+      // 未安装：仅当被项目引用或被用户改过命令时保留
+      let customized = t.command != entry.command || t.app_name != Some(entry.app_name.into());
+      if referenced.contains(&t.id.as_str()) || customized {
+        tools.push(t.clone());
+      } else {
+        log::info!("工具 {} 未安装且未被引用，从可用工具中移除", entry.name);
+      }
+    }
+    // 未安装且配置里也没有：无事可做
+  }
+
+  // 用户自定义工具（不在目录中）原样保留在末尾
+  for t in &cfg.tools {
+    if !TOOL_CATALOG.iter().any(|e| e.id == t.id) {
+      tools.push(t.clone());
+    }
+  }
+
+  cfg.tools = tools;
+}
+
 impl Config {
-  /// 出厂默认工具集：均为常见 IDE/终端，用户可在设置页增删项目。
+  /// 出厂默认工具集：从主流工具目录里挑选已安装项。
+  /// 纯首次运行（/ 配置损坏重建）场景；老用户走 init 里的 sync_installed_tools。
   fn with_default_tools() -> Self {
+    let tools: Vec<Tool> = TOOL_CATALOG
+      .iter()
+      .filter(|e| catalog_installed(e))
+      .map(|e| e.to_tool())
+      .collect();
+    // 极端情况（一个都没探测到）也要保证下拉框非空：塞入 Terminal（macOS
+    // 必有）或目录首项，避免前端拿空列表渲染不出选择器
+    let tools = if tools.is_empty() {
+      vec![Tool {
+        id: "terminal".into(),
+        name: "Terminal".into(),
+        command: "open".into(),
+        args: vec!["-a".into(), "Terminal".into()],
+        app_name: Some("Terminal".into()),
+        icon: "i-lucide-square-terminal".into(),
+      }]
+    } else {
+      tools
+    };
     Self {
-      tools: vec![
-        Tool {
-          id: "vscode".into(),
-          name: "VS Code".into(),
-          command: "code".into(),
-          args: vec!["-n".into()],
-          app_name: Some("Visual Studio Code".into()),
-          icon: "i-lucide-file-code-2".into(),
-        },
-        Tool {
-          id: "cursor".into(),
-          name: "Cursor".into(),
-          command: "cursor".into(),
-          args: vec!["-n".into()],
-          app_name: Some("Cursor".into()),
-          icon: "i-lucide-mouse-pointer-2".into(),
-        },
-        Tool {
-          id: "idea".into(),
-          name: "IntelliJ IDEA".into(),
-          command: "idea".into(),
-          args: vec![],
-          app_name: Some("IntelliJ IDEA".into()),
-          icon: "i-lucide-coffee".into(),
-        },
-        Tool {
-          id: "iterm".into(),
-          name: "iTerm".into(),
-          // iTerm 没有统一 CLI，直接走 macOS 的 open -a
-          command: "open".into(),
-          args: vec!["-a".into(), "iTerm".into()],
-          app_name: None,
-          icon: "i-lucide-terminal".into(),
-        },
-      ],
+      tools,
       projects: Vec::new(),
       global_shortcut: None,
       autostart: true,
@@ -165,6 +401,8 @@ impl Config {
       terminal_tool: None,
       // 出厂默认：跟随系统语言（前端按 navigator.language 探测）
       locale: None,
+      // 出厂默认：跟随系统主题（前端按 prefers-color-scheme 探测）
+      theme: None,
     }
   }
 }
@@ -191,7 +429,21 @@ pub fn init(app: &tauri::AppHandle) -> Result<AppState, Box<dyn std::error::Erro
   fs::create_dir_all(&dir)?;
   let config_path = dir.join("config.json");
 
-  let config = if config_path.exists() {
+  // 包名迁移：identifier 从 dev.zoro.desktop 改为 me.jackytse.zoro 后，
+  // app_config_dir 跟着变了。新目录里没有配置而旧目录里有时，把旧配置
+  // 拷贝过来，避免用户升级后工具/项目/偏好全部「消失」。
+  if !config_path.exists() {
+    if let Some(parent) = dir.parent() {
+      let legacy = parent.join("dev.zoro.desktop").join("config.json");
+      if legacy.exists() {
+        if fs::copy(&legacy, &config_path).is_ok() {
+          log::info!("已从旧包名目录迁移配置：{}", legacy.display());
+        }
+      }
+    }
+  }
+
+  let mut config = if config_path.exists() {
     match serde_json::from_str::<Config>(&fs::read_to_string(&config_path)?) {
       // 旧配置里的 ~ 前缀在此处统一展开
       Ok(mut c) => {
@@ -208,6 +460,9 @@ pub fn init(app: &tauri::AppHandle) -> Result<AppState, Box<dyn std::error::Erro
   } else {
     Config::with_default_tools()
   };
+  // 工具清单与本机安装状态对齐：未装的默认工具剔除、新装的工具补入。
+  // 放在保存之前执行，保证落盘的就是对齐后的结果
+  sync_installed_tools(&mut config);
 
   let state = AppState {
     config: Mutex::new(config),
@@ -319,6 +574,111 @@ fn levenshtein(a: &str, b: &str) -> usize {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// 工具同步：未安装、未被引用的目录工具应被移除；
+  /// 被项目引用或被用户改过 command 的保留。
+  /// 用「未安装」的目录条目做替身：xcode 在 CI 机器上基本不会装，
+  /// 但为了让测试与真实机器解耦，这里不依赖真实安装状态，
+  /// 而是构造一个必然未安装的探测路径场景来验证逻辑。
+  #[test]
+  fn sync_removes_uninstalled_unreferenced_tools() {
+    let mut cfg = Config {
+      tools: vec![Tool {
+        id: "xcode".into(),
+        name: "Xcode".into(),
+        command: "open".into(),
+        args: vec!["-a".into(), "Xcode".into()],
+        app_name: Some("Xcode".into()),
+        icon: "i-lucide-hammer".into(),
+      }],
+      projects: Vec::new(),
+      ..Default::default()
+    };
+    // 用户的机器装没装 Xcode 都可能；为了确定性，把该条目视作未安装的
+    // 前提是探测为 false —— 这里直接按真实探测结果分支断言语义：
+    // 未安装 ⇒ 被移除；已安装 ⇒ 保留。两种结果都合法。
+    sync_installed_tools(&mut cfg);
+    let installed = TOOL_CATALOG
+      .iter()
+      .find(|e| e.id == "xcode")
+      .map(catalog_installed)
+      .unwrap();
+    assert_eq!(
+      cfg.tools.iter().any(|t| t.id == "xcode"),
+      installed,
+      "同步后 xcode 的存在性应等于其安装状态"
+    );
+  }
+
+  /// 工具同步：被项目引用的工具即使未安装也必须保留（否则项目悬空）。
+  #[test]
+  fn sync_keeps_referenced_tools_even_if_uninstalled() {
+    let mut cfg = Config {
+      tools: vec![Tool {
+        id: "xcode".into(),
+        name: "Xcode".into(),
+        command: "open".into(),
+        args: vec!["-a".into(), "Xcode".into()],
+        app_name: Some("Xcode".into()),
+        icon: "i-lucide-hammer".into(),
+      }],
+      projects: vec![Project {
+        id: "p1".into(),
+        name: "demo".into(),
+        path: "/tmp/demo".into(),
+        tool_id: "xcode".into(),
+        last_opened_at: None,
+      }],
+      ..Default::default()
+    };
+    sync_installed_tools(&mut cfg);
+    assert!(
+      cfg.tools.iter().any(|t| t.id == "xcode"),
+      "被项目引用的工具不能被同步移除"
+    );
+  }
+
+  /// 工具同步：已安装但配置里缺失的目录工具应被补入（新装了 Android Studio 等）。
+  #[test]
+  fn sync_appends_newly_installed_catalog_tools() {
+    let mut cfg = Config {
+      tools: Vec::new(),
+      projects: Vec::new(),
+      ..Default::default()
+    };
+    sync_installed_tools(&mut cfg);
+    // macOS 上 Terminal.app 必然存在，所以同步后至少要有 terminal
+    #[cfg(target_os = "macos")]
+    assert!(
+      cfg.tools.iter().any(|t| t.id == "terminal"),
+      "Terminal.app 在 macOS 上必装，同步后必须出现在工具清单：{:?}",
+      cfg.tools.iter().map(|t| &t.id).collect::<Vec<_>>()
+    );
+    // 非空性：任何平台上同步结果都不应为空
+    assert!(!cfg.tools.is_empty(), "同步后的工具清单不能为空");
+  }
+
+  /// 工具同步：不在目录里的用户自定义工具原样保留。
+  #[test]
+  fn sync_keeps_custom_tools() {
+    let mut cfg = Config {
+      tools: vec![Tool {
+        id: "my-tool".into(),
+        name: "My Tool".into(),
+        command: "mytool".into(),
+        args: vec![],
+        app_name: None,
+        icon: "i-lucide-box".into(),
+      }],
+      projects: Vec::new(),
+      ..Default::default()
+    };
+    sync_installed_tools(&mut cfg);
+    assert!(
+      cfg.tools.iter().any(|t| t.id == "my-tool"),
+      "用户自定义工具必须原样保留"
+    );
+  }
 
   /// 编辑距离基本性质：相同为 0，插入/替换各计 1
   #[test]

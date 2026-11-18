@@ -40,6 +40,8 @@ export interface DesktopConfig {
   terminalTool: string | null;
   /** 界面语言："zh-CN" | "zh-TW" | "en"；null = 跟随系统语言 */
   locale: string | null;
+  /** 界面主题："light" | "dark"；null = 跟随系统 */
+  theme: string | null;
 }
 
 /** 本机终端工具扫描结果（设置页「默认终端」下拉框的单条记录） */
@@ -95,6 +97,8 @@ export const desktop = {
    */
   setLocale: (locale: "zh-CN" | "zh-TW" | "en" | null) =>
     invoke<DesktopConfig>("set_locale", { locale }),
+  /** 设置界面主题："light" / "dark"，null = 跟随系统（广播后两个窗口同步生效） */
+  setTheme: (theme: "light" | "dark" | null) => invoke<DesktopConfig>("set_theme", { theme }),
   /**
    * 设置全局快捷键；null = 恢复平台默认，"" = 禁用。
    * 失败时 reject 中文错误（组合冲突 / 无法解析）。

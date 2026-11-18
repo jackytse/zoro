@@ -14,6 +14,21 @@ const { t } = useI18n();
 const config = ref<DesktopConfig | null>(null);
 const isLoading = ref(true);
 
+/* ---------- 设置页布局：Tabs 分组 ---------- */
+/**
+ * 设置项增多后单页滚动已经很难找，按使用场景拆成三组：
+ * - 通用：外观（主题/语言）、启动（自启/快捷键）、终端行为；
+ * - 项目：增删项目、从本机工具导入；
+ * - 工具：本机可用工具清单（只读展示）。
+ * UTabs 的 items 用显式 value + slot，内容放各自命名插槽里。
+ */
+const activeTab = ref("general");
+const tabItems = computed(() => [
+  { label: t("settings.tabGeneral"), icon: "i-lucide-settings-2", value: "general", slot: "general" },
+  { label: t("settings.tabProjects"), icon: "i-lucide-folder-open", value: "projects", slot: "projects" },
+  { label: t("settings.tabTools"), icon: "i-lucide-wrench", value: "tools", slot: "tools" },
+]);
+
 /** 新增项目表单状态 */
 const form = ref({
   name: "",
@@ -64,7 +79,25 @@ async function loadConfig() {
   }
 }
 
-/* ---------- 语言设置 ---------- */
+/* ---------- 通用设置：外观（主题 / 语言） ---------- */
+
+/** 主题：跟随系统（默认）/ 浅色 / 深色；"system" 映射为后端的 null */
+const themeValue = computed(() => config.value?.theme ?? "system");
+const themeOptions = [
+  { label: t("settings.themeSystem"), value: "system", icon: "i-lucide-monitor" },
+  { label: t("settings.themeLight"), value: "light", icon: "i-lucide-sun" },
+  { label: t("settings.themeDark"), value: "dark", icon: "i-lucide-moon" },
+];
+
+/** 切换主题；广播后两个窗口同步生效。失败时重新拉取配置以回弹 */
+async function setTheme(value: string) {
+  try {
+    config.value = await desktop.setTheme(value === "system" ? null : (value as "light" | "dark"));
+  } catch (error) {
+    notify("error", t("settings.setFailed"), { description: String(error) });
+    config.value = await desktop.getConfig();
+  }
+}
 
 /** 跟随系统 + 三个显式语言选项；"follow" 映射为后端的 null */
 const languageValue = computed(() => config.value?.locale ?? "follow");
@@ -342,7 +375,7 @@ async function disableShortcut() {
   }
 }
 
-/* ---------- 通用设置：终端打开方式 ---------- */
+/* ---------- 项目行操作 ---------- */
 
 /** 更换项目的打开工具；失败时重新拉取配置以回弹下拉框选中态 */
 async function changeTool(projectId: string, toolId: string) {
@@ -452,7 +485,7 @@ export default { name: "SettingsView" };
 </script>
 
 <template>
-  <section class="space-y-8">
+  <section class="space-y-6">
     <div class="space-y-2">
       <h1 class="text-2xl font-semibold tracking-tight">{{ t("settings.title") }}</h1>
       <p class="text-sm text-muted">
@@ -460,136 +493,321 @@ export default { name: "SettingsView" };
       </p>
     </div>
 
-    <!-- 新增项目 -->
-    <UCard>
-      <template #header>
-        <p class="font-medium">{{ t("settings.addProject") }}</p>
-      </template>
-      <form class="space-y-4" @submit.prevent="addProject">
-        <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField :label="t('settings.projectName')" :hint="t('settings.nameHint')">
-            <UInput v-model="form.name" :placeholder="t('settings.namePlaceholder')" class="w-full" />
-          </UFormField>
-          <UFormField :label="t('settings.tool')">
-            <USelect v-model="form.toolId" :items="toolOptions" class="w-full" />
-          </UFormField>
-        </div>
-        <UFormField :label="t('settings.projectPath')" :hint="t('settings.pathHint')">
-          <div class="flex w-full gap-2">
-            <UInput v-model="form.path" placeholder="/Users/you/Projects/demo" class="flex-1" />
-            <UButton
-              icon="i-lucide-folder-open"
-              color="neutral"
-              variant="soft"
-              :aria-label="t('settings.browse')"
-              @click="browseFolder"
-            />
+    <!-- 顶部 Tabs：通用 / 项目 / 工具 三组，设置项多时比单页滚动更好找 -->
+    <UTabs v-model="activeTab" :items="tabItems" size="md" class="w-fit" />
+
+    <!-- ============ 通用 ============ -->
+    <template v-if="activeTab === 'general'">
+      <!-- 外观：主题 / 语言 -->
+      <UCard>
+        <template #header>
+          <p class="font-medium">{{ t("settings.appearance") }}</p>
+        </template>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">{{ t("settings.theme") }}</p>
+            <p class="mt-0.5 text-xs text-muted">{{ t("settings.themeDesc") }}</p>
           </div>
-        </UFormField>
-        <div class="flex justify-end">
-          <UButton type="submit" icon="i-lucide-plus" :loading="isSubmitting">
-            {{ t("settings.addToTray") }}
-          </UButton>
-        </div>
-      </form>
-    </UCard>
-
-    <!-- 从本机工具导入最近项目 -->
-    <UCard>
-      <template #header>
-        <div class="flex items-center justify-between gap-3">
-          <p class="font-medium">{{ t("settings.import") }}</p>
-          <UButton
-            size="sm"
-            variant="soft"
-            icon="i-lucide-download"
-            :loading="isScanning"
-            @click="scanProjects"
-          >
-            {{ t("settings.scan") }}
-          </UButton>
-        </div>
-      </template>
-      <p class="text-sm text-muted">
-        {{ t("settings.importDesc") }}
-      </p>
-    </UCard>
-
-    <!-- 已配置项目 -->
-    <UCard>
-      <template #header>
-        <p class="font-medium">{{ t("settings.configuredProjects", { n: config?.projects.length ?? 0 }) }}</p>
-      </template>
-      <div v-if="isLoading" class="flex flex-col gap-2">
-        <USkeleton v-for="i in 3" :key="i" class="h-10 rounded-lg" />
-      </div>
-      <p
-        v-else-if="(config?.projects.length ?? 0) === 0"
-        class="py-6 text-center text-sm text-muted"
-      >
-        {{ t("settings.emptyProjects") }}
-      </p>
-      <ul v-else class="divide-y divide-default">
-        <li
-          v-for="project in config!.projects"
-          :key="project.id"
-          class="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
-        >
-          <!-- 图标随项目绑定的开发工具变化：直接显示对应 IDE 的品牌图标 -->
-          <ToolIcon
-            :tool-id="project.toolId"
-            :fallback-icon="config!.tools.find((t) => t.id === project.toolId)?.icon"
-            icon-class="size-5 shrink-0"
-          />
-          <span class="min-w-0 flex-1">
-            <span class="block truncate text-sm font-medium">{{ project.name }}</span>
-            <span class="block truncate text-xs text-muted">{{ project.path }}</span>
-          </span>
-          <!-- 最近打开时间：与托盘弹窗同一套相对时间文案 -->
-          <span class="shrink-0 text-xs text-dimmed">
-            {{ formatRelativeTime(project.lastOpenedAt) }}
-          </span>
-          <!-- 打开工具：行内下拉可直接更换，图标随之联动 -->
           <USelect
-            :model-value="project.toolId"
-            :items="toolOptions"
+            :model-value="themeValue"
+            :items="themeOptions"
+            size="sm"
+            class="w-44 shrink-0"
+            :aria-label="t('settings.theme')"
+            @update:model-value="setTheme"
+          />
+        </div>
+        <!-- 语言：跟随系统 / 简体中文 / 繁體中文 / English，切换后全局热生效 -->
+        <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
+          <div>
+            <p class="text-sm font-medium">{{ t("settings.language") }}</p>
+            <p class="mt-0.5 text-xs text-muted">{{ t("settings.languageDesc") }}</p>
+          </div>
+          <USelect
+            :model-value="languageValue"
+            :items="languageOptions"
+            size="sm"
+            class="w-44 shrink-0"
+            :aria-label="t('settings.language')"
+            @update:model-value="setLanguage"
+          />
+        </div>
+      </UCard>
+
+      <!-- 启动：开机自启 / 全局快捷键 -->
+      <UCard>
+        <template #header>
+          <p class="font-medium">{{ t("settings.launch") }}</p>
+        </template>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">{{ t("settings.autostart") }}</p>
+            <p class="mt-0.5 text-xs text-muted">{{ t("settings.autostartDesc") }}</p>
+          </div>
+          <USwitch
+            :model-value="config?.autostart ?? false"
+            :aria-label="t('settings.autostart')"
+            @update:model-value="toggleAutostart"
+          />
+        </div>
+        <!-- 全局快捷键 -->
+        <div class="mt-6 border-t border-default pt-6">
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <p class="text-sm font-medium">{{ t("settings.shortcut") }}</p>
+              <p class="mt-0.5 text-xs text-muted">{{ t("settings.shortcutHint") }}</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <UKbd v-if="!isRecording" size="md">{{ shortcutDisplay }}</UKbd>
+              <!-- 录入态：聚焦的方块捕获按键组合 -->
+              <div
+                v-else
+                ref="recorderRef"
+                tabindex="0"
+                class="flex h-8 min-w-40 items-center justify-center rounded-md border border-primary px-2 text-sm outline-none"
+                @keydown="onRecorderKeydown"
+                @blur="stopRecording"
+              >
+                <span v-if="shortcutPreview" class="font-medium">{{
+                  formatShortcut(shortcutPreview)
+                }}</span>
+                <span v-else class="text-xs text-muted">{{ t("settings.pressKeys") }}</span>
+              </div>
+              <template v-if="isRecording">
+                <UButton
+                  size="sm"
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-x"
+                  @click="stopRecording"
+                >
+                  {{ t("settings.cancel") }}
+                </UButton>
+                <UButton
+                  size="sm"
+                  icon="i-lucide-check"
+                  :disabled="!shortcutPreview"
+                  @click="saveShortcut"
+                >
+                  {{ t("settings.save") }}
+                </UButton>
+              </template>
+              <template v-else>
+                <!-- 降级类操作用 neutral，与右侧主动作「修改」区分主次 -->
+                <UButton
+                  v-if="config?.globalShortcut === ''"
+                  size="sm"
+                  color="neutral"
+                  variant="soft"
+                  icon="i-lucide-rotate-ccw"
+                  @click="resetShortcut"
+                >
+                  {{ t("settings.reset") }}
+                </UButton>
+                <UButton
+                  v-else
+                  size="sm"
+                  color="error"
+                  variant="soft"
+                  icon="i-lucide-circle-off"
+                  @click="disableShortcut"
+                >
+                  {{ t("settings.disable") }}
+                </UButton>
+                <UButton
+                  size="sm"
+                  variant="soft"
+                  icon="i-lucide-pencil-line"
+                  @click="startRecording"
+                >
+                  {{ t("settings.edit") }}
+                </UButton>
+              </template>
+            </div>
+          </div>
+          <p class="mt-2 text-xs text-muted">
+            {{ t("settings.shortcutDesc", { default: formatShortcut("Super+Shift+P") }) }}
+          </p>
+        </div>
+      </UCard>
+
+      <!-- 终端：打开方式 / 默认终端 -->
+      <UCard>
+        <template #header>
+          <p class="font-medium">{{ t("settings.terminalSection") }}</p>
+        </template>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">{{ t("settings.terminalMode") }}</p>
+            <p class="mt-0.5 text-xs text-muted">
+              {{ t("settings.terminalModeDesc") }}
+            </p>
+          </div>
+          <USelect
+            :model-value="terminalModeDisplay"
+            :items="[
+              { label: t('settings.terminalWindow'), value: 'window' },
+              { label: t('settings.terminalTab'), value: 'tab' },
+            ]"
             size="sm"
             class="w-36 shrink-0"
-            :aria-label="$t('settings.projectTool')"
-            @update:model-value="(v: string) => changeTool(project.id, v)"
+            :aria-label="t('settings.terminalMode')"
+            @update:model-value="setTerminalMode"
           />
-          <!-- 终端入口：与托盘弹窗一致，在默认终端打开项目目录 -->
-          <UButton
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-square-terminal"
-            :aria-label="$t('tray.openInTerminal')"
-            :title="$t('tray.openInTerminal')"
-            @click="openInTerminalFromSettings(project)"
+        </div>
+        <!-- 默认终端工具：扫描本机已装终端，推荐项默认选中 -->
+        <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
+          <div>
+            <p class="text-sm font-medium">{{ t("settings.defaultTerminal") }}</p>
+            <p class="mt-0.5 text-xs text-muted">
+              {{ t("settings.defaultTerminalDesc") }}
+            </p>
+          </div>
+          <USelect
+            :model-value="terminalToolDisplay"
+            :items="terminalToolItems"
+            size="sm"
+            class="w-44 shrink-0"
+            :aria-label="t('settings.defaultTerminal')"
+            @update:model-value="setDefaultTerminal"
           />
-          <UButton
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-external-link"
-            :aria-label="$t('settings.tryOpen')"
-            @click="openProject(project.id, project.name)"
-          />
-          <UButton
-            size="xs"
-            color="error"
-            variant="ghost"
-            icon="i-lucide-trash-2"
-            :aria-label="$t('settings.removeProject')"
-            @click="removeProject(project.id, project.name)"
-          />
-        </li>
-      </ul>
-    </UCard>
+        </div>
+      </UCard>
+    </template>
 
-    <!-- 工具清单（内置，只读展示） -->
-    <UCard>
+    <!-- ============ 项目 ============ -->
+    <template v-else-if="activeTab === 'projects'">
+      <!-- 新增项目 -->
+      <UCard>
+        <template #header>
+          <p class="font-medium">{{ t("settings.addProject") }}</p>
+        </template>
+        <form class="space-y-4" @submit.prevent="addProject">
+          <div class="grid gap-4 sm:grid-cols-2">
+            <UFormField :label="t('settings.projectName')" :hint="t('settings.nameHint')">
+              <UInput v-model="form.name" :placeholder="t('settings.namePlaceholder')" class="w-full" />
+            </UFormField>
+            <UFormField :label="t('settings.tool')">
+              <USelect v-model="form.toolId" :items="toolOptions" class="w-full" />
+            </UFormField>
+          </div>
+          <UFormField :label="t('settings.projectPath')" :hint="t('settings.pathHint')">
+            <div class="flex w-full gap-2">
+              <UInput v-model="form.path" placeholder="/Users/you/Projects/demo" class="flex-1" />
+              <UButton
+                icon="i-lucide-folder-open"
+                color="neutral"
+                variant="soft"
+                :aria-label="t('settings.browse')"
+                @click="browseFolder"
+              />
+            </div>
+          </UFormField>
+          <div class="flex justify-end">
+            <UButton type="submit" icon="i-lucide-plus" :loading="isSubmitting">
+              {{ t("settings.addToTray") }}
+            </UButton>
+          </div>
+        </form>
+      </UCard>
+
+      <!-- 从本机工具导入最近项目 -->
+      <UCard>
+        <template #header>
+          <div class="flex items-center justify-between gap-3">
+            <p class="font-medium">{{ t("settings.import") }}</p>
+            <UButton
+              size="sm"
+              variant="soft"
+              icon="i-lucide-folder-search"
+              :loading="isScanning"
+              @click="scanProjects"
+            >
+              {{ t("settings.scan") }}
+            </UButton>
+          </div>
+        </template>
+        <p class="text-sm text-muted">
+          {{ t("settings.importDesc") }}
+        </p>
+      </UCard>
+
+      <!-- 已配置项目 -->
+      <UCard>
+        <template #header>
+          <p class="font-medium">{{ t("settings.configuredProjects", { n: config?.projects.length ?? 0 }) }}</p>
+        </template>
+        <div v-if="isLoading" class="flex flex-col gap-2">
+          <USkeleton v-for="i in 3" :key="i" class="h-10 rounded-lg" />
+        </div>
+        <p
+          v-else-if="(config?.projects.length ?? 0) === 0"
+          class="py-6 text-center text-sm text-muted"
+        >
+          {{ t("settings.emptyProjects") }}
+        </p>
+        <ul v-else class="divide-y divide-default">
+          <li
+            v-for="project in config!.projects"
+            :key="project.id"
+            class="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
+          >
+            <!-- 图标随项目绑定的开发工具变化：直接显示对应 IDE 的品牌图标 -->
+            <ToolIcon
+              :tool-id="project.toolId"
+              :fallback-icon="config!.tools.find((t) => t.id === project.toolId)?.icon"
+              icon-class="size-5 shrink-0"
+            />
+            <span class="min-w-0 flex-1">
+              <span class="block truncate text-sm font-medium">{{ project.name }}</span>
+              <span class="block truncate text-xs text-muted">{{ project.path }}</span>
+            </span>
+            <!-- 最近打开时间：与托盘弹窗同一套相对时间文案 -->
+            <span class="shrink-0 text-xs text-dimmed">
+              {{ formatRelativeTime(project.lastOpenedAt) }}
+            </span>
+            <!-- 打开工具：行内下拉可直接更换，图标随之联动 -->
+            <USelect
+              :model-value="project.toolId"
+              :items="toolOptions"
+              size="sm"
+              class="w-36 shrink-0"
+              :aria-label="$t('settings.projectTool')"
+              @update:model-value="(v: string) => changeTool(project.id, v)"
+            />
+            <!-- 终端入口：与托盘弹窗一致，在默认终端打开项目目录 -->
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-square-terminal"
+              :aria-label="$t('tray.openInTerminal')"
+              :title="$t('tray.openInTerminal')"
+              @click="openInTerminalFromSettings(project)"
+            />
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-external-link"
+              :aria-label="$t('settings.tryOpen')"
+              @click="openProject(project.id, project.name)"
+            />
+            <UButton
+              size="xs"
+              color="error"
+              variant="ghost"
+              icon="i-lucide-trash-2"
+              :aria-label="$t('settings.removeProject')"
+              @click="removeProject(project.id, project.name)"
+            />
+          </li>
+        </ul>
+      </UCard>
+    </template>
+
+    <!-- ============ 工具 ============ -->
+    <UCard v-else>
       <template #header>
         <p class="font-medium">{{ t("settings.tools") }}</p>
       </template>
@@ -611,145 +829,6 @@ export default { name: "SettingsView" };
           </span>
         </li>
       </ul>
-    </UCard>
-
-    <!-- 通用设置 -->
-    <UCard>
-      <template #header>
-        <p class="font-medium">{{ t("settings.general") }}</p>
-      </template>
-      <div class="flex items-center justify-between gap-4">
-        <div>
-          <p class="text-sm font-medium">{{ t("settings.autostart") }}</p>
-          <p class="mt-0.5 text-xs text-muted">{{ t("settings.autostartDesc") }}</p>
-        </div>
-        <USwitch
-          :model-value="config?.autostart ?? false"
-          :aria-label="t('settings.autostart')"
-          @update:model-value="toggleAutostart"
-        />
-      </div>
-      <!-- 语言：跟随系统 / 简体中文 / 繁體中文 / English，切换后全局热生效 -->
-      <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
-        <div>
-          <p class="text-sm font-medium">{{ t("settings.language") }}</p>
-          <p class="mt-0.5 text-xs text-muted">{{ t("settings.languageDesc") }}</p>
-        </div>
-        <USelect
-          :model-value="languageValue"
-          :items="languageOptions"
-          size="sm"
-          class="w-44 shrink-0"
-          :aria-label="t('settings.language')"
-          @update:model-value="setLanguage"
-        />
-      </div>
-      <!-- 终端打开方式：影响最近项目悬停终端图标的行为 -->
-      <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
-        <div>
-          <p class="text-sm font-medium">{{ t("settings.terminalMode") }}</p>
-          <p class="mt-0.5 text-xs text-muted">
-            {{ t("settings.terminalModeDesc") }}
-          </p>
-        </div>
-        <USelect
-          :model-value="terminalModeDisplay"
-          :items="[
-            { label: t('settings.terminalWindow'), value: 'window' },
-            { label: t('settings.terminalTab'), value: 'tab' },
-          ]"
-          size="sm"
-          class="w-36 shrink-0"
-          :aria-label="t('settings.terminalMode')"
-          @update:model-value="setTerminalMode"
-        />
-      </div>
-      <!-- 默认终端工具：扫描本机已装终端，推荐项默认选中 -->
-      <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
-        <div>
-          <p class="text-sm font-medium">{{ t("settings.defaultTerminal") }}</p>
-          <p class="mt-0.5 text-xs text-muted">
-            {{ t("settings.defaultTerminalDesc") }}
-          </p>
-        </div>
-        <USelect
-          :model-value="terminalToolDisplay"
-          :items="terminalToolItems"
-          size="sm"
-          class="w-44 shrink-0"
-          :aria-label="t('settings.defaultTerminal')"
-          @update:model-value="setDefaultTerminal"
-        />
-      </div>
-    </UCard>
-
-    <!-- 全局快捷键 -->
-    <UCard>
-      <template #header>
-        <p class="font-medium">{{ t("settings.shortcut") }}</p>
-      </template>
-      <div class="space-y-4">
-        <div class="flex items-center gap-3">
-          <span class="text-sm text-muted">{{ t("settings.shortcutHint") }}</span>
-          <UKbd v-if="!isRecording" size="md">{{ shortcutDisplay }}</UKbd>
-          <!-- 录入态：聚焦的方块捕获按键组合 -->
-          <div
-            v-else
-            ref="recorderRef"
-            tabindex="0"
-            class="flex h-8 min-w-40 items-center justify-center rounded-md border border-primary px-2 text-sm outline-none"
-            @keydown="onRecorderKeydown"
-            @blur="stopRecording"
-          >
-            <span v-if="shortcutPreview" class="font-medium">{{
-              formatShortcut(shortcutPreview)
-            }}</span>
-            <span v-else class="text-xs text-muted">{{ t("settings.pressKeys") }}</span>
-          </div>
-        </div>
-        <p class="text-xs text-muted">
-          {{ t("settings.shortcutDesc", { default: formatShortcut("Super+Shift+P") }) }}
-        </p>
-        <div class="flex justify-end gap-2">
-          <template v-if="isRecording">
-            <UButton size="sm" color="neutral" variant="ghost" @click="stopRecording">
-              {{ t("settings.cancel") }}
-            </UButton>
-            <UButton
-              size="sm"
-              icon="i-lucide-check"
-              :disabled="!shortcutPreview"
-              @click="saveShortcut"
-            >
-              {{ t("settings.save") }}
-            </UButton>
-          </template>
-          <template v-else>
-            <!-- 降级类操作用 neutral，与右侧主动作「修改」区分主次 -->
-            <UButton
-              v-if="config?.globalShortcut === ''"
-              size="sm"
-              color="neutral"
-              variant="soft"
-              @click="resetShortcut"
-            >
-              {{ t("settings.reset") }}
-            </UButton>
-            <UButton
-              v-else
-              size="sm"
-              color="error"
-              variant="soft"
-              @click="disableShortcut"
-            >
-              {{ t("settings.disable") }}
-            </UButton>
-            <UButton size="sm" variant="soft" icon="i-lucide-pencil-line" @click="startRecording">
-              {{ t("settings.edit") }}
-            </UButton>
-          </template>
-        </div>
-      </div>
     </UCard>
 
     <!-- 导入确认弹窗：勾选要导入的项目并确认打开工具 -->
@@ -799,7 +878,7 @@ export default { name: "SettingsView" };
       <template #footer>
         <div class="flex w-full items-center justify-end gap-3">
           <!-- 数量已在 body 顶部的全选栏展示，这里只留操作按钮 -->
-          <UButton color="neutral" variant="ghost" @click="importOpen = false">
+          <UButton color="neutral" variant="ghost" icon="i-lucide-x" @click="importOpen = false">
             {{ t("settings.cancel") }}
           </UButton>
           <UButton icon="i-lucide-check" :disabled="selectedCount === 0" @click="importSelected">

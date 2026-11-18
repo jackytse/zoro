@@ -1,19 +1,47 @@
 <script setup lang="ts">
+import { onMounted, ref } from "vue";
 import { useColorMode } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
+import { desktop, type DesktopConfig } from "./api/desktop";
+import { useAppTheme } from "./composables/useAppTheme";
 
 /**
  * 明暗主题：Nuxt UI 的组件样式跟着 html 上的 .dark 类走，
- * 而 @vueuse/core 的 useColorMode 默认就是往 <html> 写 class 并持久化到 localStorage，
- * 两者天然对齐，所以这里直接用 vueuse 的实现而不是 Nuxt UI 的 colorMode 插件。
+ * 而 @vueuse/core 的 useColorMode 默认就是往 <html> 写 class，
+ * 两者天然对齐。这里只负责应用逻辑，偏好来源是后端配置
+ * （settings.theme），由 useAppTheme 统一watch并应用。
  */
 const colorMode = useColorMode();
 const { t } = useI18n();
 
-/** 在明暗之间直接翻转，不做 system 态的回退，避免点击后看起来“没反应” */
+/** 配置快照：App 层只需要 theme（语言等由页面组件各自消费） */
+const config = ref<DesktopConfig | null>(null);
+useAppTheme(config);
+
+/**
+ * 头部明暗切换按钮：按当前实际生效的主题取反（而非配置值取反——
+ * "跟随系统"时取反也要落在一个确定的主题上），并持久化到配置。
+ */
 function toggleColorMode() {
-  colorMode.value = colorMode.value === "dark" ? "light" : "dark";
+  const dark = colorMode.value === "dark";
+  void desktop.setTheme(dark ? "light" : "dark").then((c) => (config.value = c));
 }
+
+/** 配置变更监听的取消函数；卸载时解绑 */
+let offConfigChanged: (() => void) | null = null;
+
+onMounted(() => {
+  void desktop
+    .getConfig()
+    .then((c) => (config.value = c))
+    .catch(() => {});
+  offConfigChanged = desktop.onConfigChanged(() => {
+    void desktop
+      .getConfig()
+      .then((c) => (config.value = c))
+      .catch(() => {});
+  });
+});
 </script>
 
 <template>
@@ -23,17 +51,16 @@ function toggleColorMode() {
     <div class="flex min-h-screen flex-col bg-default text-default">
       <!--
         macOS 用 Overlay 标题栏（原生红绿灯悬浮在内容上，无标题文字）。
-        布局对齐 Tiny RDM：标题（图标 + 应用名）紧跟在红绿灯右侧左对齐，
-        不居中；红绿灯经 trafficLightPosition 与 40px 标题栏垂直居中。
+        标题水平居中：absolute + inset-x-0 + 居中布局，与 macOS 原生窗口
+        标题习惯一致；红绿灯悬浮在左上角，不占布局空间。
         data-tauri-drag-region 只作用于挂载元素本身，按钮不挂以免吞掉点击。
       -->
       <header
         class="sticky top-0 z-10 h-10 border-b border-default bg-default/80 backdrop-blur"
         data-tauri-drag-region
       >
-        <!-- left-[80px]：红绿灯从 x=16 开始、宽约 52px，80px 起正好留出间距 -->
         <div
-          class="pointer-events-none absolute inset-y-0 left-20 flex items-center gap-1.5 text-sm font-semibold select-none"
+          class="pointer-events-none absolute inset-x-0 inset-y-0 flex items-center justify-center gap-1.5 text-sm font-semibold select-none"
           data-tauri-drag-region
         >
           <UIcon name="i-lucide-hexagon" class="size-4 text-primary" />

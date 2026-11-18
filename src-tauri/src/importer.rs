@@ -11,6 +11,8 @@
 //!   `~/Library/Application Support/JetBrains/<产品版本>/options/recentProjects.xml`
 //!   - 新版：`additionalInfo` map 的 `<entry key="路径">`
 //!   - 旧版：`recentPaths` 列表的 `<option value="路径">`
+//! - Android Studio：数据文件格式与 JetBrains 完全一致，只是根目录不同——
+//!   `~/Library/Application Support/Google/AndroidStudio<版本>/options/recentProjects.xml`
 //!
 //! 设计约定：
 //! - 扫描是**只读**的，不会写入任何工具的数据文件；
@@ -53,7 +55,13 @@ pub fn scan(home: &Path, existing: &[(String, String)]) -> Vec<DetectedProject> 
     }
   }
   // JetBrains 各产品的记录统一归到 idea 工具（导入时可改选）
-  for p in scan_jetbrains(&support.join("JetBrains"), existing) {
+  for p in scan_jetbrains(&support.join("JetBrains"), existing, "idea") {
+    if seen.insert(p.path.clone()) {
+      found.push(p);
+    }
+  }
+  // Android Studio 与 JetBrains 同构，但根目录在 Google/ 下，归到 android-studio
+  for p in scan_jetbrains(&support.join("Google"), existing, "android-studio") {
     if seen.insert(p.path.clone()) {
       found.push(p);
     }
@@ -244,8 +252,9 @@ fn read_uris_from_storage_json(path: &Path) -> Vec<String> {
   uris
 }
 
-/// 扫描 JetBrains 系列产品的 recentProjects.xml。
-fn scan_jetbrains(base: &Path, existing: &[(String, String)]) -> Vec<DetectedProject> {
+/// 扫描 JetBrains 系（含 Android Studio，二者数据格式一致）的 recentProjects.xml。
+/// `tool_id` 决定扫出的项目归属哪个工具（idea / android-studio）。
+fn scan_jetbrains(base: &Path, existing: &[(String, String)], tool_id: &str) -> Vec<DetectedProject> {
   let Ok(home) = std::env::var("HOME") else {
     return Vec::new();
   };
@@ -268,7 +277,7 @@ fn scan_jetbrains(base: &Path, existing: &[(String, String)]) -> Vec<DetectedPro
       if out.len() >= MAX_PER_SOURCE {
         return out;
       }
-      push_if_valid(&mut out, path, "idea", existing);
+      push_if_valid(&mut out, path, tool_id, existing);
     }
   }
   out

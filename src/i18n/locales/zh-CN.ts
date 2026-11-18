@@ -87,6 +87,21 @@ export default {
 
     // 通用
     general: "通用",
+    // 设置页分组 Tabs
+    tabGeneral: "通用",
+    tabProjects: "项目",
+    tabTools: "工具",
+    // 外观
+    appearance: "外观",
+    theme: "主题",
+    themeDesc: "界面明暗主题，默认跟随系统，系统切换时实时跟随",
+    themeSystem: "跟随系统",
+    themeLight: "浅色",
+    themeDark: "深色",
+    // 启动
+    launch: "启动",
+    // 终端分组标题
+    terminalSection: "终端",
     autostart: "开机自动启动",
     autostartDesc: "登录系统后自动运行并最小化到托盘，不弹出主窗口",
     autostartOn: "已开启开机自启",

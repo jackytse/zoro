@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useNotify } from "../composables/useNotify";
 import { desktop, type DesktopConfig, type Project } from "../api/desktop";
 import { applyLocale, resolveLocale } from "../i18n";
+import { useAppTheme } from "../composables/useAppTheme";
 import ToolIcon from "../components/ToolIcon.vue";
 import { formatRelativeTime } from "../utils/time";
 
@@ -12,6 +13,8 @@ const { t } = useI18n();
 
 /** 配置快照；null 表示还在加载首屏 */
 const config = ref<DesktopConfig | null>(null);
+/** 弹窗窗口的主题跟随配置（useAppTheme 监听并写 <html> 的 .dark 类） */
+useAppTheme(config);
 
 /** 工具 id -> Tool 的索引，避免渲染时反复 find */
 const toolMap = computed(() => {
@@ -169,7 +172,7 @@ onBeforeUnmount(() => {
               <span class="min-w-0 flex-1">
                 <span class="block truncate text-sm font-medium">{{ project.name }}</span>
                 <span class="block truncate text-xs text-muted">
-                  {{ toolMap.get(project.toolId)?.name ?? t("tray.unknownTool") }} · {{ project.path }}
+                  {{ project.path }}
                 </span>
               </span>
               <span class="shrink-0 text-xs text-dimmed">

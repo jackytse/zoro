@@ -60,8 +60,18 @@ async function browseFolder() {
   }
 }
 
+/**
+ * 终端类工具 id：不进入「可用工具」清单与「打开工具」下拉——
+ * 终端的形态与选择由「通用 → 终端」设置（默认终端 / 打开方式）控制，
+ * 项目行的终端图标也独立于工具选择存在，两套入口互不混淆。
+ */
+const TERMINAL_TOOL_IDS = ["iterm", "terminal"];
+const ideTools = computed(() =>
+  (config.value?.tools ?? []).filter((tool) => !TERMINAL_TOOL_IDS.includes(tool.id)),
+);
+
 const toolOptions = computed(() =>
-  (config.value?.tools ?? []).map((tool) => ({
+  ideTools.value.map((tool) => ({
     label: `${tool.name}（${tool.command}）`,
     value: tool.id,
   })),
@@ -816,7 +826,7 @@ export default { name: "SettingsView" };
       </p>
       <ul class="divide-y divide-default">
         <li
-          v-for="tool in config?.tools ?? []"
+          v-for="tool in ideTools"
           :key="tool.id"
           class="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
         >

@@ -50,10 +50,26 @@ echo "pnpm: $(pnpm -v)"
 
 # ---------- 3. Rust 工具链 ----------
 # 构建机没装 rust 时自动补装 rustup（官方脚本，最小化交互）。
-# 装完 PATH 里还没有 cargo，因为 rustup 默认装到 ~/.cargo/bin，这里显式补上。
+# 两个关键点：
+#   --profile minimal 只装 rustc/cargo/rust-std，比 default 少下文档、
+#     clippy 等一堆组件，构建机不需要它们；
+#   keepalive 循环定期输出一行日志——CNB 的「无输出超时」是 10 分钟，
+#     rustup 静默下载大组件时极易被误杀（实测 9.8 分钟被掐），
+#     心跳输出可保持流水线认为任务活跃。
 if ! command -v cargo >/dev/null; then
-  echo "cargo 未安装，安装 rustup..."
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+  echo "cargo 未安装，安装 rustup（minimal profile）..."
+  # 后台心跳：每 20s 打一行，直到 rustup 装完（PID 轮询到进程消失为止）
+  (
+    while true; do
+      sleep 20
+      echo "[keepalive] rustup 安装中... $(date +%H:%M:%S)"
+    done
+  ) &
+  KEEPALIVE_PID=$!
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal --default-toolchain stable
+  # 无论成败都要收掉心跳进程，不然它会一直活着打日志
+  kill "$KEEPALIVE_PID" 2>/dev/null || true
 fi
 export PATH="$HOME/.cargo/bin:$PATH"
 echo "cargo: $(cargo --version)"

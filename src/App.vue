@@ -15,8 +15,9 @@ function toggleColorMode() {
 </script>
 
 <template>
-  <!-- UApp 提供 toast / tooltip 等全局浮层的挂载点，必须包在最外层；toast 固定在窗口顶部居中 -->
-  <UApp :toaster="{ position: 'top-center' }">
+  <!-- UApp 提供 toast / tooltip 等全局浮层的挂载点，必须包在最外层；
+       toast 固定在窗口顶部居中；progress: false 关掉 toast 底部的倒计时进度条 -->
+  <UApp :toaster="{ position: 'top-center', progress: false }">
     <div class="flex min-h-screen flex-col bg-default text-default">
       <!--
         macOS 用 Overlay 标题栏（原生红绿灯悬浮在内容上，无标题文字）。

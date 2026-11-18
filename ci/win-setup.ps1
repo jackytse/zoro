@@ -15,6 +15,16 @@
 # 而不是跑到二十分钟的 Rust release 编译时才炸。
 $ErrorActionPreference = "Stop"
 
+# 让中文输出在 CI 日志中不乱码：runner 控制台默认 GBK 代码页，
+# 脚本本身是 UTF-8（带 BOM），不改代码页的话输出会被按 GBK 转码成乱码
+try {
+    chcp 65001 > $null
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch {
+    # 编码设置失败不影响主流程（个别精简系统可能缺 chcp）
+}
+
 Write-Host "== Windows 构建节点环境检查 =="
 cmd /c ver
 Write-Host "架构: $env:PROCESSOR_ARCHITECTURE"
@@ -35,9 +45,49 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 Write-Host "git: $(git --version)"
 
 # ---------- 2. Node.js ----------
-# Tauri 的 beforeBuildCommand 走 pnpm，pnpm 又依赖 node，链条最上游
+# Tauri 的 beforeBuildCommand 走 pnpm，pnpm 又依赖 node，链条最上游。
+# 构建机没装时自动安装 Node.js 22 LTS：用官方便携 zip（免管理员权限），
+# 解压到 USERPROFILE\.cache\nodejs 并写入用户 PATH——宿主机持久，
+# 后续流水线重跑时直接命中，不会重复下载。
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Fail "未安装 node" "请在该构建机上安装 Node.js 20+（官网安装包或 nvm-windows）"
+    Write-Host "node 未安装，自动安装 Node.js 22 LTS（便携 zip，无需管理员）..."
+    $NodeHome = Join-Path $env:USERPROFILE ".cache\nodejs"
+    New-Item -ItemType Directory -Force -Path $NodeHome | Out-Null
+    # 从官方 latest-v22.x 目录页解析出 zip 文件名，写死版本号容易 404
+    $Listing = Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/latest-v22.x/"
+    $ZipName = ([regex]::Matches($Listing.Content, "node-v[\d.]+-win-x64\.zip") | Select-Object -First 1).Value
+    if (-not $ZipName) {
+        Fail "无法解析 Node.js 安装包文件名" "请检查 https://nodejs.org/dist/latest-v22.x/ 是否可访问，或在该构建机手动安装 Node.js 20+"
+    }
+    Write-Host "下载: $ZipName"
+    $ZipPath = Join-Path $env:TEMP $ZipName
+    # keepalive 后台任务：下载包 30MB+，防止 CNB 10 分钟无输出超时误杀
+    $Keepalive = Start-Job -ScriptBlock {
+        while ($true) {
+            Start-Sleep -Seconds 20
+            Write-Output "[keepalive] node 安装包下载/解压中... $(Get-Date -Format HH:mm:ss)"
+        }
+    }
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/latest-v22.x/$ZipName" -OutFile $ZipPath
+        Expand-Archive -Path $ZipPath -DestinationPath $NodeHome -Force
+    } finally {
+        # 无论成败都要收掉心跳任务，不然它会一直活着打日志
+        Stop-Job $Keepalive -ErrorAction SilentlyContinue
+        Remove-Job $Keepalive -Force -ErrorAction SilentlyContinue
+    }
+    $NodeDir = Join-Path $NodeHome ($ZipName -replace "\.zip$", "")
+    # 当前进程 PATH（本次 stage 生效）
+    $env:PATH = "$NodeDir;$env:PATH"
+    # 用户级持久 PATH（后续 stage 与重跑流水线直接命中，不再重复下载）
+    $UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($UserPath -notlike "*$NodeDir*") {
+        [Environment]::SetEnvironmentVariable("PATH", "$NodeDir;$UserPath", "User")
+        Write-Host "已写入用户 PATH: $NodeDir"
+    }
+}
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Fail "node 安装失败" "自动安装未成功，请在该构建机手动安装 Node.js 20+（官网安装包或 nvm-windows）"
 }
 $NodeMajor = [int](node -p "process.versions.node.split('.')[0]")
 Write-Host "node: $(node -v)"

@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 use tauri::Manager;
@@ -182,4 +182,112 @@ pub fn next_id(existing: &[Project]) -> String {
     id = format!("p{base}-{counter}");
   }
   id
+}
+
+/// 路径不存在时猜测「用户真正想输入的目录」，用于报错信息里给出可采纳的建议。
+///
+/// 处理两类常见手滑：
+/// 1. 漏了开头的 `/`（如 `Users/me/proj`）→ 补上后存在即返回；
+/// 2. 中间某级目录名拼错（如 `Projecjs` vs `Projects`）→ 找到最近的
+///    真实存在的祖先目录，在它的子项里找编辑距离最近的名字，再拼回剩余路径。
+pub fn suggest_similar_dir(path: &str) -> Option<String> {
+  // 情况 1：漏了前导斜杠
+  if !path.starts_with('/') {
+    let with_slash = format!("/{path}");
+    if Path::new(&with_slash).is_dir() {
+      return Some(with_slash);
+    }
+  }
+
+  let p = Path::new(path);
+  // 从最深一级向上找第一个真实存在的祖先目录
+  let mut ancestor = p.parent()?;
+  while !ancestor.as_os_str().is_empty() && !ancestor.is_dir() {
+    ancestor = ancestor.parent()?;
+  }
+  if ancestor.as_os_str().is_empty() {
+    return None;
+  }
+
+  // tail 是祖先之后缺失的部分，至少一级；拿第一级去和现有子项比对
+  let mut tail = p.strip_prefix(ancestor).ok()?.components();
+  let missing = tail.next()?.as_os_str().to_string_lossy().into_owned();
+  let rest: Vec<_> = tail.collect();
+
+  // 在祖先的子目录里找编辑距离最小的名字
+  let best = std::fs::read_dir(ancestor)
+    .ok()?
+    .filter_map(|e| e.ok())
+    .filter(|e| e.path().is_dir())
+    .map(|e| e.file_name().to_string_lossy().into_owned())
+    .min_by_key(|n| levenshtein(n, &missing))?;
+
+  // 阈值：距离 ≤ 3 且不超过较长串长度的一半，防止把完全不相关的目录拉进来
+  let distance = levenshtein(&best, &missing);
+  if distance > 3 || distance * 2 > best.len().max(missing.len()) {
+    return None;
+  }
+
+  // 拼回建议路径：祖先/相近名/剩余部分
+  let mut suggestion = ancestor.join(&best);
+  for part in rest {
+    suggestion.push(part);
+  }
+  Some(suggestion.to_string_lossy().into_owned())
+}
+
+/// 经典动态规划编辑距离，按字符比较（正确处理中文等多字节字符）。
+fn levenshtein(a: &str, b: &str) -> usize {
+  let a: Vec<char> = a.chars().collect();
+  let b: Vec<char> = b.chars().collect();
+  // 滚动数组：只保留上一行，空间 O(min(m,n))
+  let mut prev: Vec<usize> = (0..=b.len()).collect();
+  for (i, ca) in a.iter().enumerate() {
+    let mut cur = vec![i + 1; b.len() + 1];
+    for (j, cb) in b.iter().enumerate() {
+      cur[j + 1] = (prev[j] + usize::from(ca != cb))
+        .min(prev[j + 1] + 1)
+        .min(cur[j] + 1);
+    }
+    prev = cur;
+  }
+  prev[b.len()]
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// 编辑距离基本性质：相同为 0，插入/替换各计 1
+  #[test]
+  fn levenshtein_basics() {
+    assert_eq!(levenshtein("Projects", "Projects"), 0);
+    assert_eq!(levenshtein("Projecjs", "Projects"), 1); // 一次替换：j -> t
+    assert_eq!(levenshtein("", "abc"), 3);
+    assert_eq!(levenshtein("项目", "项止"), 1);
+  }
+
+  /// 端到端：拼错的目录名能推荐出真实目录；不相关的则返回 None
+  #[test]
+  fn suggests_close_sibling_dir() {
+    let tmp = std::env::temp_dir().join(format!("zoro-suggest-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("Projects/zoro")).unwrap();
+    std::fs::create_dir_all(tmp.join("Other")).unwrap();
+
+    let home = tmp.to_string_lossy();
+
+    // 拼写错误（中间目录）→ 建议真实目录并拼回尾部
+    let typo = format!("{home}/Projecjs/zoro");
+    assert_eq!(
+      suggest_similar_dir(&typo),
+      Some(format!("{home}/Projects/zoro"))
+    );
+
+    // 完全不存在的名字且无相近项 → None
+    let nonsense = format!("{home}/qqqqqqqqqq");
+    assert_eq!(suggest_similar_dir(&nonsense), None);
+
+    std::fs::remove_dir_all(&tmp).unwrap();
+  }
 }

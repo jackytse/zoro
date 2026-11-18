@@ -53,7 +53,12 @@ pub fn add_project(
   // 只接受目录：这些工具的语义就是打开一个工作区
   let p = std::path::Path::new(&path);
   if !p.is_dir() {
-    return Err(format!("路径不存在或不是目录：{path}"));
+    // 拼写错误时给出最接近的真实路径，省得用户对着报错逐字符排查
+    let mut message = format!("路径不存在或不是目录：{path}");
+    if let Some(suggestion) = config::suggest_similar_dir(&path) {
+      message.push_str(&format!("，是不是想输入：{suggestion}？"));
+    }
+    return Err(message);
   }
 
   let mut cfg = state.config.lock().unwrap();

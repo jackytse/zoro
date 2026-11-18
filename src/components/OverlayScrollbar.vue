@@ -87,10 +87,9 @@ onBeforeUnmount(() => {
     @mouseenter="hovering = true"
     @mouseleave="onLeave"
   >
-    <!-- 视口：滚动行为的真正载体；osb-none 在 <style> 里隐藏原生滚动条。
-         max-h-[inherit]：外层根元素用 max-h-80 限高时视口跟着继承，
-         组件既能在定高 flex 容器里用，也能包一段限高的列表 -->
-    <div ref="viewport" class="osb-viewport h-full max-h-[inherit]">
+    <!-- 视口：滚动行为的真正载体，overflow-y-auto 是滚动的前提（此前漏写
+         导致内容直接溢出、整窗无法滚动）。osb-none 的隐藏规则见 <style> -->
+    <div ref="viewport" class="osb-viewport h-full overflow-y-auto">
       <div ref="content">
         <slot />
       </div>
@@ -122,6 +121,9 @@ onBeforeUnmount(() => {
  */
 .osb-viewport {
   scrollbar-width: none;
+  /* 外层根元素限高（如导入弹窗列表的 max-h-80）时，视口继承同一上限，
+     内容超出即在组件内滚动；未限高时继承 none，行为不变 */
+  max-height: inherit;
 }
 .osb-viewport::-webkit-scrollbar {
   display: none;

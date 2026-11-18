@@ -1,12 +1,19 @@
-﻿# Windows 发布构建：产出 msi 与 nsis 安装包，并做版本校验与产物校验。
+﻿# Windows 发布构建：尽量产出 msi / nsis 安装包，便携 zip 兜底保证必有产物。
 #
 # 运行环境：CNB 自建 Windows 节点（宿主机 PowerShell 直跑，无 docker）。
 #
-# 校验项（失败任意一项即终止）：
-#   1. tag_push 场景 tag 名 == tauri.conf.json version；
-#   2. msi / nsis 安装包生成且非空；
-#   3. 输出体积 + sha256 指纹留档；
-#   4. tag 构建时建 release 并上传附件（复用 ci/upload-release.sh，走 git bash）。
+# 产物策略（按优先级，任何一项失败都不阻塞其余产物）：
+#   1. nsis setup.exe（Windows 通用安装器）——本节点因管家类安全软件
+#      拦截未签名工具（makensis 被静默破坏：首次 0xC0000135 加载失败、
+#      重下后文件被截断成 2560 字节），经常失败；
+#   2. msi（企业部署场景，依赖 WiX candle，同样受杀软拦截）；
+#   3. 便携 zip（release 目录下的主程序 + 说明文件）——零工具链依赖，
+#      只要 Rust 编译成功就必有，作为兜底交付物。
+#
+# 校验项：
+#   - tag_push 场景 tag 名 == tauri.conf.json version；
+#   - 最终至少产出一件附件，否则失败；
+#   - tag 构建时建 release 并上传附件（复用 ci/upload-release.sh，走 git bash）。
 #
 # 注意：self-hosted Windows runner 默认 shell 是 Windows PowerShell 5.x，
 # 本文件必须带 UTF-8 BOM 才能正确解析中文注释（PS5 无 BOM 按 ANSI 读取）。
@@ -43,119 +50,129 @@ if ($Ref -like "v*") {
     Write-Host "OK: tag 与应用版本一致"
 }
 
-# ---------- 2. 打包（nsis 必选 + msi 可选） ----------
-# tauri build 会先跑 beforeBuildCommand（pnpm build）再编译 release。
-# 注意 PowerShell 会把裸逗号 `msi,nsis` 当数组语法展开，tauri 收到
-# "msi nsis" 直接报 invalid value——所以用重复 flag 的写法绕开解析差异。
-#
-# nsis / msi 分两次打包，原因是 WiX 的 candle.exe 在部分构建机上会
-# 因安全软件拦截或缺运行库而静默失败（报错信息为空，无从排查），
-# 若绑在一条命令里会让整个发布失败。因此：nsis（Windows 通用安装器）
-# 作为必选产物，失败即终止；msi（企业部署场景）作为可选产物，
-# 失败只告警并跳过，不阻塞 nsis 附件发布。
+# ---------- 2. 编译（release） ----------
+# 先只做编译，不指定 bundle 类型——产物在 $TargetRoot\release\<crate>.exe。
+# 安装包随后按需分次打包：每一类失败都不影响编译成果的交付。
 # 先清掉 bundle 输出目录：编译缓存卷里会残留旧版本的安装包，
 # 不清理的话后面的产物收集可能挑中上一次的旧包。
 $BundleDir = Join-Path $TargetRoot "release\bundle"
 if (Test-Path $BundleDir) { Remove-Item -Recurse -Force $BundleDir }
 $StartAt = [DateTime]::Now
-pnpm exec tauri build --bundles nsis
+pnpm exec tauri build --no-bundle
 if ($LASTEXITCODE -ne 0) {
-    # tauri 只报一句 "Failed to bundle app with makensis"，真实报错被吞掉。
-    # 这里做四项诊断，把根因打回 CI 日志：
-    #   1. NSIS 工具目录是否存在及内容（tauri 是否真的下载成功了）；
-    #   2. 每个文件是否带 Zone.Identifier（MOTW）——带标记的 exe 会被
-    #      SmartScreen 拦截，"Running makensis" 后 21ms 就挂正是这种症状；
-    #   3. 直接调用 makensis 抓真实 stderr/退出码；
-    #   4. Defender 检测历史里最近的威胁记录（杀软静默拦截的常见证据）。
-    $NsisToolDir = Join-Path $env:LOCALAPPDATA "tauri\NSIS"
-    Write-Host "== 诊断 1: NSIS 工具目录 $NsisToolDir =="
-    if (Test-Path $NsisToolDir) {
-        Get-ChildItem $NsisToolDir | ForEach-Object { Write-Host ("  {0}  {1} bytes" -f $_.Name, $_.Length) }
-    } else {
-        Write-Host "  目录不存在——tauri 未成功下载 NSIS"
-    }
-    Write-Host "== 诊断 2: Zone.Identifier（MOTW）检查 =="
-    Get-ChildItem $NsisToolDir -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
-        if (Get-Item $_.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue) {
-            Write-Host "  MOTW: $($_.FullName)"
-        }
-    }
-    Write-Host "== 诊断 3: 直接调用 makensis =="
-    $Makensis = Join-Path $NsisToolDir "makensis.exe"
-    if (Test-Path $Makensis) {
-        $Out = & $Makensis -VERSION 2>&1
-        $Out | ForEach-Object { Write-Host "  $_" }
-        Write-Host "  makensis -VERSION 退出码: $LASTEXITCODE"
-        # 再跑一次真实打包命令复现，抓 stderr（tauri 调用时吞掉了）
-        $NsiFile = Join-Path $env:TEMP "zoro-diag.nsi"
-        "OutFile diag.exe" | Out-File $NsiFile -Encoding ascii
-        $Out2 = & $Makensis $NsiFile 2>&1
-        $Out2 | Select-Object -Last 10 | ForEach-Object { Write-Host "  $_" }
-        Write-Host "  makensis diag 退出码: $LASTEXITCODE"
-    } else {
-        Write-Host "  makensis.exe 不存在"
-    }
-    Write-Host "== 诊断 4: Defender 最近检测记录 =="
-    try {
-        Get-MpThreatDetection -ErrorAction Stop | Sort-Object InitialDetectionTime -Descending |
-            Select-Object -First 5 | ForEach-Object {
-                Write-Host ("  {0}  {1}  resources: {2}" -f $_.InitialDetectionTime, $_.ThreatStatusID, ($_.Resources -join ","))
-            }
-    } catch { Write-Host "  无法读取（$(($_.Exception.Message -split "`n")[0])）" }
+    Write-Host "== FAIL: Rust release 编译失败（tauri 退出码 $LASTEXITCODE）" -ForegroundColor Red
     exit 1
 }
+Write-Host ("编译耗时: {0}s" -f ([int]([DateTime]::Now - $StartAt).TotalSeconds))
+
+# ---------- 3. 安装包打包（尽力而为） ----------
+$HasNsis = $false
+pnpm exec tauri build --bundles nsis
+if ($LASTEXITCODE -eq 0) {
+    $HasNsis = $true
+} else {
+    # tauri 只报一句 "Failed to bundle app with makensis"，真实报错被吞掉。
+    # 打三行诊断进 CI 日志：工具目录内容（看 makensis 是否被杀软截断/疫苗化）、
+    # MOTW 标记、直接调用 makensis 的退出码。
+    $NsisToolDir = Join-Path $env:LOCALAPPDATA "tauri\NSIS"
+    Write-Host "WARN: nsis 打包失败，诊断信息：" -ForegroundColor Yellow
+    if (Test-Path $NsisToolDir) {
+        Get-ChildItem $NsisToolDir -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host ("  {0}  {1} bytes" -f $_.Name, $_.Length) }
+        $Makensis = Join-Path $NsisToolDir "makensis.exe"
+        if (Test-Path $Makensis) {
+            & $Makensis -VERSION 2>&1 | ForEach-Object { Write-Host "  $_" } | Out-Null
+            Write-Host ("  直接调用 makensis -VERSION 退出码: {0}（-1073741515 = 0xC0000135 加载被拦）" -f $LASTEXITCODE)
+        }
+    } else {
+        Write-Host "  NSIS 工具目录不存在: $NsisToolDir"
+    }
+    Write-Host "WARN: 跳过 nsis 安装包。若需恢复安装包产物，请在构建机安全软件中" -ForegroundColor Yellow
+    Write-Host "      把 $env:LOCALAPPDATA\tauri 目录加入信任/白名单。" -ForegroundColor Yellow
+}
+
 $HasMsi = $false
 pnpm exec tauri build --bundles msi
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "WARN: msi 打包失败（WiX candle 兼容性问题？），本次跳过 msi，仅发布 nsis" -ForegroundColor Yellow
-} else {
+if ($LASTEXITCODE -eq 0) {
     $HasMsi = $true
+} else {
+    Write-Host "WARN: msi 打包失败（WiX candle 被安全软件拦截？），跳过 msi" -ForegroundColor Yellow
 }
-Write-Host ("打包耗时: {0}s" -f ([int]([DateTime]::Now - $StartAt).TotalSeconds))
 
-# ---------- 3. 产物定位与校验 ----------
-# 产物落盘位置跟随 CARGO_TARGET_DIR（Windows 节点用 USERPROFILE 缓存增量编译）
-$NsisDir = Join-Path $BundleDir "nsis"
-$Nsis = Get-ChildItem -Path $NsisDir -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $Nsis) { Write-Host "== FAIL: 未找到 nsis 产物" -ForegroundColor Red; exit 1 }
-if ($Nsis.Length -le 0) { Write-Host "== FAIL: 产物为空: $($Nsis.FullName)" -ForegroundColor Red; exit 1 }
-Write-Host ("产物: {0} ({1:N1} MB)" -f $Nsis.FullName, ($Nsis.Length / 1MB))
+# ---------- 4. 收集产物（zip 兜底，保证至少一件） ----------
+$Assets = @()          # 相对 AssetDir 的附件文件名（不含 sha256，指纹另行生成）
+$AssetDir = "release-assets"
+if (Test-Path $AssetDir) { Remove-Item -Recurse -Force $AssetDir }
+New-Item -ItemType Directory -Path $AssetDir | Out-Null
+
+if ($HasNsis) {
+    $Nsis = Get-ChildItem -Path (Join-Path $BundleDir "nsis") -Filter "*.exe" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($Nsis) {
+        $Name = "zoro_${Version}_windows_amd64-setup.exe"
+        Copy-Item $Nsis.FullName (Join-Path $AssetDir $Name)
+        $Assets += $Name
+        Write-Host ("产物: {0} ({1:N1} MB)" -f $Nsis.FullName, ($Nsis.Length / 1MB))
+    }
+}
 if ($HasMsi) {
-    $Msi = Get-ChildItem -Path (Join-Path $BundleDir "msi") -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $Msi) { $HasMsi = $false }
-    else {
-        if ($Msi.Length -le 0) { Write-Host "== FAIL: 产物为空: $($Msi.FullName)" -ForegroundColor Red; exit 1 }
+    $Msi = Get-ChildItem -Path (Join-Path $BundleDir "msi") -Filter "*.msi" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($Msi) {
+        $Name = "zoro_${Version}_windows_amd64.msi"
+        Copy-Item $Msi.FullName (Join-Path $AssetDir $Name)
+        $Assets += $Name
         Write-Host ("产物: {0} ({1:N1} MB)" -f $Msi.FullName, ($Msi.Length / 1MB))
     }
 }
 
-# ---------- 4. 发布：建 release 并上传附件 ----------
+# 便携 zip 兜底：主程序 exe + WebView2 说明。Tauri 前端资源内嵌在 exe 中，
+# Win10/11 20H2+ 系统自带 WebView2 运行时，解压即可运行，无需安装。
+if ($Assets.Count -eq 0) {
+    Write-Host "安装包均未产出，走便携 zip 兜底..."
+    $MainExe = Get-ChildItem -Path (Join-Path $TargetRoot "release") -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+        Sort-Object Length -Descending | Select-Object -First 1
+    if (-not $MainExe) {
+        Write-Host "== FAIL: release 目录下找不到主程序 exe" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host ("  主程序: {0} ({1:N1} MB)" -f $MainExe.FullName, ($MainExe.Length / 1MB))
+    $Stage = Join-Path $env:TEMP "zoro-portable"
+    if (Test-Path $Stage) { Remove-Item -Recurse -Force $Stage }
+    New-Item -ItemType Directory $Stage | Out-Null
+    Copy-Item $MainExe.FullName (Join-Path $Stage "zoro.exe")
+    $Readme = @"
+Zoro ${Version} (Windows 便携版)
+
+使用方法：
+  1. 解压本压缩包到任意目录；
+  2. 双击 zoro.exe 运行。
+
+说明：
+  - 需要 WebView2 运行时（Windows 10 20H2+ / Windows 11 系统自带；
+    如缺失请安装 https://go.microsoft.com/fwlink/p/?LinkId=2124703 ）；
+  - 首次运行后，配置文件位于 %APPDATA%\me.jackytse.zoro\config.json。
+"@
+    $Readme | Out-File (Join-Path $Stage "README.txt") -Encoding utf8
+    $ZipName = "zoro_${Version}_windows_amd64.zip"
+    Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath (Join-Path $AssetDir $ZipName) -Force
+    $Assets += $ZipName
+    Write-Host "产物: $ZipName（便携版）"
+}
+
+# sha256 指纹留档，格式与 shasum -a 256 输出对齐（小写哈希 + 两个空格 + 文件名）
+foreach ($name in $Assets) {
+    $Path = Join-Path $AssetDir $name
+    $Hash = (Get-FileHash -Algorithm SHA256 -Path $Path).Hash.ToLower()
+    "$Hash  $name" | Out-File -FilePath "$Path.sha256" -Encoding ascii
+    Write-Host "指纹: $Hash  $name"
+}
+
+# ---------- 5. 发布：建 release 并上传附件 ----------
 # 仅 tag_push（tag 名形如 vX.Y.Z）时上传；非 tag 构建只验证链路。
-# 附件按实际产出收集：nsis setup.exe 必有，msi 视打包结果，各带 sha256；
-# 统一加 OS/架构 标识命名（tauri 默认名只有架构与语言，如 *_x64_en-US.msi）。
+# 上传复用 ci/upload-release.sh（bash 脚本，对 Linux/mac/Windows 三端零改动）；
+# Windows 侧通过 Git for Windows 自带的 bash 执行，优先 PATH，其次常规安装路径
 if ($Ref -like "v*") {
-    $AssetDir = "release-assets"
-    if (Test-Path $AssetDir) { Remove-Item -Recurse -Force $AssetDir }
-    New-Item -ItemType Directory -Path $AssetDir | Out-Null
-
-    # 统一命名：zoro_<ver>_windows_amd64-setup.exe / zoro_<ver>_windows_amd64.msi
-    $Assets = @("zoro_${Version}_windows_amd64-setup.exe")
-    Copy-Item $Nsis.FullName (Join-Path $AssetDir $Assets[0])
-    if ($HasMsi) {
-        $Assets += "zoro_${Version}_windows_amd64.msi"
-        Copy-Item $Msi.FullName (Join-Path $AssetDir $Assets[-1])
-    }
-
-    # sha256 指纹留档，格式与 shasum -a 256 输出对齐（小写哈希 + 两个空格 + 文件名）
-    foreach ($name in $Assets) {
-        $Path = Join-Path $AssetDir $name
-        $Hash = (Get-FileHash -Algorithm SHA256 -Path $Path).Hash.ToLower()
-        "$Hash  $name" | Out-File -FilePath "$Path.sha256" -Encoding ascii
-        Write-Host "指纹: $Hash  $name"
-    }
-
-    # 上传复用 ci/upload-release.sh（bash 脚本，对 Linux/mac/Windows 三端零改动）；
-    # Windows 侧通过 Git for Windows 自带的 bash 执行，优先 PATH，其次常规安装路径
     $Bash = Get-Command bash -ErrorAction SilentlyContinue
     if ($Bash) { $BashExe = $Bash.Source } else { $BashExe = "C:\Program Files\Git\bin\bash.exe" }
     if (-not (Test-Path $BashExe)) {
@@ -174,5 +191,5 @@ if ($Ref -like "v*") {
     Write-Host "非 tag 构建（$Ref），跳过 release 上传"
 }
 
-$BundleKinds = if ($HasMsi) { "msi / nsis" } else { "nsis（msi 跳过）" }
-Write-Host "== OK: Windows 发布测试通过（$BundleKinds） =="
+$Summary = if ($HasNsis -or $HasMsi) { ($Assets -join " / ") } else { "便携 zip（安装包被安全软件拦截，见上方 WARN）" }
+Write-Host "== OK: Windows 发布完成（$Summary） =="

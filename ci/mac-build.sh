@@ -19,6 +19,11 @@ set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
+# 自建 Mac 节点的 HOME 持久：把 release 编译产物放在 HOME 下的固定目录，
+# 跨构建复用（工作区每次重新 clone，workspace 内的 target 目录不会留存）。
+# cargo 按指纹做增量编译，commit 变化只会重编变动的 crate。
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/zoro-target}"
+
 # ---------- 1. 版本一致性 ----------
 VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
 REF="${CNB_BRANCH:-unknown}"

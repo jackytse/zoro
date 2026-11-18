@@ -121,6 +121,35 @@ pub fn remove_project(
   Ok(snapshot)
 }
 
+/// 更换已配置项目的打开工具（设置页项目行的下拉框）。
+/// 只改 tool_id，其余字段（路径 / 名称 / last_opened_at）原样保留；
+/// 工具或项目不存在时拒绝，避免配置里出现悬空引用。
+#[tauri::command]
+pub fn set_project_tool(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  project_id: String,
+  tool_id: String,
+) -> Result<Config, String> {
+  {
+    let mut cfg = state.config.lock().unwrap();
+    if !cfg.tools.iter().any(|t| t.id == tool_id) {
+      return Err(format!("未找到工具：{tool_id}"));
+    }
+    let Some(project) = cfg.projects.iter_mut().find(|p| p.id == project_id) else {
+      return Err(format!("项目不存在：{project_id}"));
+    };
+    // 重复设置同一个工具时不落盘，直接返回当前快照（前端用于回弹）
+    if project.tool_id == tool_id {
+      return Ok(cfg.clone());
+    }
+    project.tool_id = tool_id;
+  }
+  config::save(&state)?;
+  broadcast(&app);
+  Ok(state.config.lock().unwrap().clone())
+}
+
 /// 用项目所属工具打开它；成功后刷新 last_opened_at 并隐藏弹窗。
 #[tauri::command]
 pub fn open_project(

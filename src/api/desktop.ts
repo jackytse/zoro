@@ -65,6 +65,10 @@ export const desktop = {
 
   /** 在系统终端打开一个目录（最近项目悬停的终端图标）；方式读自配置 */
   openInTerminal: (path: string) => invoke<void>("open_in_terminal", { path }),
+  /** 更换已配置项目的打开工具（设置页项目行下拉框）；返回更新后的配置 */
+  setProjectTool: (projectId: string, toolId: string) =>
+    invoke<DesktopConfig>("set_project_tool", { projectId, toolId }),
+
   /** 设置终端打开方式："window"（新窗口，默认）或 "tab"（新选项卡） */
   setTerminalMode: (mode: "window" | "tab") =>
     invoke<DesktopConfig>("set_terminal_mode", { mode }),

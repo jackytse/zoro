@@ -147,6 +147,7 @@ pub fn run() {
       commands::set_global_shortcut,
       commands::set_autostart,
       commands::remove_project,
+      commands::set_project_tool,
       commands::open_project,
       commands::open_in_terminal,
       commands::set_terminal_mode,

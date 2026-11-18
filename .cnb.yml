@@ -13,7 +13,11 @@
 # 也因此不声明 volumes（宿主 HOME 持久，工具链与缓存天然复用）。
 #
 # 缓存策略（Linux 容器侧）：
-# /root/.rustup、/root/.cargo、/root/.local/share/pnpm 挂 copy-on-write 数据卷。
+# /root/.rustup、/root/.cargo、/root/.local/share/pnpm 挂 copy-on-write 数据卷：
+#   - .rustup / .cargo 缓存 Rust 工具链与依赖源码；
+#   - .local/share/pnpm 就是 pnpm store 的默认位置，依赖包下载一次即复用；
+# /root/zoro-target 是 CARGO_TARGET_DIR（ci/*.sh 里导出），缓存编译产物——
+#   增量编译让二次构建从全量重编（约 5 分钟）降到秒级链接。
 # 首次跑要装工具链，之后命中缓存，准备阶段从分钟级降到十来秒。
 # PR 用的卷是只读版（copy-on-write-read-only），避免外部 PR 污染缓存。
 # ============================================================
@@ -32,6 +36,7 @@ main:
           - /root/.rustup:copy-on-write
           - /root/.cargo:copy-on-write
           - /root/.local/share/pnpm:copy-on-write
+          - /root/zoro-target:copy-on-write
       stages:
         - name: prepare environment
           script: bash ci/setup.sh
@@ -50,6 +55,7 @@ main:
           - /root/.rustup:copy-on-write-read-only
           - /root/.cargo:copy-on-write-read-only
           - /root/.local/share/pnpm:copy-on-write-read-only
+          - /root/zoro-target:copy-on-write-read-only
       stages:
         - name: prepare environment
           script: bash ci/setup.sh
@@ -70,14 +76,14 @@ main:
   # 与 tag 发布唯一的区别是跳过「tag 名 == 版本号」的一致性校验。
   # 同一事件声明两条流水线：Linux 容器出 deb、自建 Mac 节点出 .app/.dmg，
   # 两条并行跑，互不阻塞（各自失败各自上报）。
+  # 注意：发布链路不再重复跑质量门禁——tag 与 main 同一 commit，门禁已在
+  # push 阶段通过；这里重复编译 debug 产物只会白白翻倍构建时间。
   api_trigger_release:
     - name: manual-release-linux
       docker: *ci-docker
       stages: &release-stages
         - name: prepare environment
           script: bash ci/setup.sh
-        - name: build and test
-          script: bash ci/test.sh
         - name: build desktop bundle
           script: bash ci/release.sh
       failStages:

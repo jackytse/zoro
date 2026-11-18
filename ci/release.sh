@@ -17,6 +17,10 @@ set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
+# release 编译产物也落数据卷：与 test.sh 的 debug 产物共存于同一 target 目录
+# （cargo 按 profile 分目录存放），tag 发布二次构建只做增量编译
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/root/zoro-target}"
+
 # ---------- 1. 版本一致性 ----------
 VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
 # tag_push 事件里 CNB_BRANCH 就是 tag 名；分支触发时是分支名

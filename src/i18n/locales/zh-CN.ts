@@ -91,6 +91,8 @@ export default {
     autostartDesc: "登录系统后自动运行并最小化到托盘，不弹出主窗口",
     autostartOn: "已开启开机自启",
     autostartOff: "已关闭开机自启",
+    projectTool: "打开工具",
+    changeToolFailed: "更换打开工具失败",
     terminalMode: "终端打开方式",
     terminalModeDesc: "最近项目里点终端图标时，在新窗口还是新选项卡打开",
     terminalWindow: "新窗口",

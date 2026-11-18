@@ -84,7 +84,10 @@ echo "Xcode CLT: $(xcode-select -p)"
 command -v codesign >/dev/null && echo "codesign: 可用"
 
 # ---------- 5. 依赖安装 ----------
-# frozen-lockfile：与 CI 的其它链路保持一致，锁文件不对齐时立刻失败
-pnpm install --frozen-lockfile
+# frozen-lockfile：与 CI 的其它链路保持一致，锁文件不对齐时立刻失败；
+# --prefer-offline：优先命中宿主持久化的 pnpm store（HOME/Library/pnpm），
+#   没有变化时全部走本地缓存，省掉几十秒到几分钟的下载
+pnpm install --frozen-lockfile --prefer-offline
+echo "pnpm store: $(pnpm store path)"
 
 echo "✓ macOS 环境准备完成"

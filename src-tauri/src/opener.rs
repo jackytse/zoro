@@ -111,24 +111,44 @@ pub fn open_in_terminal(path: &str, mode: &str) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   {
     let cd = format!("cd {}", shell_quote(path));
-    let new_window = mode == "window";
+    let want_tab = mode != "window";
 
-    // 依次尝试（AppleScript 控制应用需要 macOS 的「自动化」授权，
-    // 首次调用系统会弹权限确认，拒绝时脚本报错并自动降级）：
-    // - tab 模式：iTerm 选项卡 → Terminal 选项卡 → 都失败退回新窗口形态
-    // - window 模式：iTerm 新窗口 → Terminal 新窗口
-    let mut attempts: Vec<(&str, String)> = Vec::new();
-    if !new_window {
-      attempts.push(("iTerm 选项卡", iterm_script(&cd, false)));
-      attempts.push(("Terminal 选项卡", terminal_script(&cd, false, true)));
+    // 同一次调用只驱动一个终端应用：按「已安装优先级」选定 iTerm 或 Terminal，
+    // 之后只在它身上完成 tab / window。之前的多应用连锁降级会在中间态出错时
+    // 层层下坠（iTerm 开了标签、Terminal 又开窗口），结果对用户完全不可预期。
+    // AppleScript 控制应用需要 macOS 的「自动化」授权，首次调用会弹权限确认，
+    // 拒绝时脚本报错并走降级。
+    let app = if Path::new("/Applications/iTerm.app").exists() {
+      "iTerm"
+    } else {
+      "Terminal"
+    };
+    let label = if want_tab { "新选项卡" } else { "新窗口" };
+
+    let primary = if app == "iTerm" {
+      iterm_script(&cd, want_tab)
+    } else {
+      terminal_script(&cd, want_tab)
+    };
+    match osascript(&primary) {
+      Ok(()) => return Ok(()),
+      Err(err) => {
+        log::warn!("AppleScript 启动 {app}（{label}）失败：{}", enrich_osascript_error(&err))
+      }
     }
-    attempts.push(("iTerm 新窗口", iterm_script(&cd, true)));
-    attempts.push(("Terminal 新窗口", terminal_script(&cd, true, false)));
-
-    for (label, script) in &attempts {
-      match osascript(script) {
+    // 应用内降级：tab 失败（无现有窗口 / 缺辅助功能权限）退回同一应用的新窗口，
+    // 保证结果永远是「只动了一个应用」，不会出现 A 应用标签 + B 应用窗口
+    if want_tab {
+      let fallback = if app == "iTerm" {
+        iterm_script(&cd, false)
+      } else {
+        terminal_script(&cd, false)
+      };
+      match osascript(&fallback) {
         Ok(()) => return Ok(()),
-        Err(err) => log::warn!("AppleScript 启动 {label} 失败：{}", enrich_osascript_error(&err)),
+        Err(err) => {
+          log::warn!("AppleScript {app} 降级为新窗口失败：{}", enrich_osascript_error(&err))
+        }
       }
     }
     // 自动化权限被拒（用户点了「不允许」/ 从未授权）时，用 open 兜底：
@@ -205,34 +225,40 @@ fn enrich_osascript_error(err: &str) -> String {
   }
 }
 
-/// iTerm 的 AppleScript：new_window = true 开新窗口，false 在现有窗口开新标签页。
+/// iTerm 的 AppleScript：want_tab = true 且已有窗口时在现有窗口开新标签页，
+/// 否则（无窗口 / 要新窗口）开新窗口。两种形态都把 cd 写进新会话。
+///
+/// 注意 `create tab` 之后必须用 `current session`（iTerm 会把它指向新标签页的
+/// 会话）；直接对 `create tab` 的返回值（tab 对象）发 write text 会报
+/// "event not handled"——tab 已创建但脚本失败，正是此前「开了标签又降级」的元凶。
 #[cfg(target_os = "macos")]
-fn iterm_script(cd: &str, new_window: bool) -> String {
+fn iterm_script(cd: &str, want_tab: bool) -> String {
   let cmd = apple_escape(cd);
-  if new_window {
+  let inner = if want_tab {
     format!(
-      "tell application \"iTerm\"\n  create window with default profile\n  tell current session of current window to write text \"{cmd}\"\nend tell"
+      "if (count of windows) > 0 then\n    tell current window\n      create tab with default profile\n      tell current session to write text \"{cmd}\"\n    end tell\n  else\n    create window with default profile\n    tell current session of current window to write text \"{cmd}\"\n  end if"
     )
   } else {
     format!(
-      "tell application \"iTerm\"\n  tell current window\n    set s to (create tab with default profile)\n    tell s to write text \"{cmd}\"\n  end tell\nend tell"
+      "create window with default profile\n  tell current session of current window to write text \"{cmd}\""
     )
-  }
+  };
+  format!("tell application \"iTerm\"\n  {inner}\nend tell")
 }
 
-/// Terminal.app 的 AppleScript。
-/// - new_window = true：`do script` 不带窗口参数即开新窗口；
-/// - new_window = false（新选项卡）：借助 System Events 发 ⌘T 开标签页
-///   （需要「辅助功能」权限），再把 cd 写进最前面的窗口（即新标签页）。
+/// Terminal.app 的 AppleScript：want_tab = true 时借助 System Events 发 ⌘T
+/// 新开标签页（需要「辅助功能」权限），再把 cd 写进最前面的窗口（即新标签页）；
+/// false 直接 `do script`（不带窗口参数即开新窗口）。
 #[cfg(target_os = "macos")]
-fn terminal_script(cd: &str, new_window: bool, tab_via_keystroke: bool) -> String {
+fn terminal_script(cd: &str, want_tab: bool) -> String {
   let cmd = apple_escape(cd);
-  if new_window || !tab_via_keystroke {
-    return format!("tell application \"Terminal\" to do script \"{cmd}\"");
+  if want_tab {
+    format!(
+      "tell application \"Terminal\"\n  activate\n  tell application \"System Events\" to keystroke \"t\" using command down\n  delay 0.3\n  do script \"{cmd}\" in window 1\nend tell"
+    )
+  } else {
+    format!("tell application \"Terminal\" to do script \"{cmd}\"")
   }
-  format!(
-    "tell application \"Terminal\"\n  activate\n  tell application \"System Events\" to keystroke \"t\" using command down\n  delay 0.3\n  do script \"{cmd}\" in window 1\nend tell"
-  )
 }
 
 /// 在登录 shell 里探测命令是否存在（返回 bool，不抛错）。

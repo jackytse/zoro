@@ -12,6 +12,10 @@ set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
+# 编译产物目录指向数据卷（.cnb.yml 已挂 /root/zoro-target:copy-on-write）：
+# 单测是 debug profile，产物跨流水线复用后，二次运行只剩增量编译
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/root/zoro-target}"
+
 # 前端：构建 + vue-tsc 类型检查
 pnpm run build
 

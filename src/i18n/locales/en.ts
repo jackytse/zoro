@@ -88,6 +88,8 @@ export default {
     autostartDesc: "Start automatically after login and minimize to tray without showing the window",
     autostartOn: "Launch at login enabled",
     autostartOff: "Launch at login disabled",
+    projectTool: "Open with tool",
+    changeToolFailed: "Failed to change open tool",
     terminalMode: "Terminal open mode",
     terminalModeDesc: "Whether the terminal icon in recent projects opens a new window or a new tab",
     terminalWindow: "New window",

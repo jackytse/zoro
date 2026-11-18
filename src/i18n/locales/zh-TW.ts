@@ -84,6 +84,8 @@ export default {
     autostartDesc: "登入系統後自動執行並最小化到托盤，不彈出主視窗",
     autostartOn: "已開啟開機自動啟動",
     autostartOff: "已關閉開機自動啟動",
+    projectTool: "開啟工具",
+    changeToolFailed: "更換開啟工具失敗",
     terminalMode: "終端開啟方式",
     terminalModeDesc: "最近專案裡點終端圖示時，在新視窗還是新分頁開啟",
     terminalWindow: "新視窗",

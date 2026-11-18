@@ -344,6 +344,16 @@ async function disableShortcut() {
 
 /* ---------- 通用设置：终端打开方式 ---------- */
 
+/** 更换项目的打开工具；失败时重新拉取配置以回弹下拉框选中态 */
+async function changeTool(projectId: string, toolId: string) {
+  try {
+    config.value = await desktop.setProjectTool(projectId, toolId);
+  } catch (error) {
+    notify("error", t("settings.changeToolFailed"), { description: String(error) });
+    config.value = await desktop.getConfig();
+  }
+}
+
 /** 展示用归一化：旧配置里的 "existing" 等价于 "tab"，避免 RadioGroup 匹配不到 */
 const terminalModeDisplay = computed<"window" | "tab">(
   () => (config.value?.terminalOpenMode === "tab" || config.value?.terminalOpenMode === "existing"
@@ -486,9 +496,15 @@ export default { name: "SettingsView" };
           <span class="shrink-0 text-xs text-dimmed">
             {{ formatRelativeTime(project.lastOpenedAt) }}
           </span>
-          <UBadge color="neutral" variant="subtle" size="sm">
-            {{ config!.tools.find((t) => t.id === project.toolId)?.name ?? $t("tray.unknownTool") }}
-          </UBadge>
+          <!-- 打开工具：行内下拉可直接更换，图标随之联动 -->
+          <USelect
+            :model-value="project.toolId"
+            :items="toolOptions"
+            size="sm"
+            class="w-36 shrink-0"
+            :aria-label="$t('settings.projectTool')"
+            @update:model-value="(v: string) => changeTool(project.id, v)"
+          />
           <UButton
             size="xs"
             color="neutral"

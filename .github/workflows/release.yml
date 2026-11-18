@@ -1,0 +1,199 @@
+# GitHub Actions 发布流水线
+#
+# 触发方式：
+#   1. push tag（形如 v0.1.4）  → 三平台并行构建 + 自动创建 Release + 上传附件
+#   2. workflow_dispatch        → 手动触发（仅验证构建，不打 tag 不上传 Release）
+#
+# 与 CNB 流水线的产物命名保持一致：zoro_<ver>_<os>_<arch>
+#   linux  → zoro_<ver>_linux_amd64.deb
+#   macos  → zoro_<ver>_macos_aarch64.dmg
+#   windows→ zoro_<ver>_windows_amd64-setup.exe / zoro_<ver>_windows_amd64.msi
+# 附件一律附带 .sha256 指纹文件。
+#
+# GitHub 官方托管 runner 环境干净（无第三方管家类软件拦截未签名工具），
+# NSIS / WiX 可正常构建，不存在 CNB Windows 自建节点上安装包被杀软
+# 疫苗化的问题；Linux 系统依赖由 apt 在 ubuntu runner 上按需安装。
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# 创建 Release 与上传附件需要 contents 写权限
+permissions:
+  contents: write
+
+# 同一个 tag 重复推送时，取消旧的过时构建
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      # 一个平台失败不影响其他平台继续出产物，方便定位平台差异问题
+      fail-fast: false
+      matrix:
+        include:
+          # ---------- Linux（deb）----------
+          # ubuntu-22.04 自带较旧的 glibc，产出的 deb 兼容面更广
+          - os: linux
+            runner: ubuntu-22.04
+            bundles: deb
+          # ---------- macOS（Apple Silicon，dmg）----------
+          # macos-latest 即 arm64 runner，与 CNB 侧的 macos_aarch64 产物对应
+          - os: macos
+            runner: macos-latest
+            bundles: dmg
+          # ---------- Windows（nsis setup.exe + msi）----------
+          - os: windows
+            runner: windows-latest
+            bundles: nsis,msi
+
+    runs-on: ${{ matrix.runner }}
+    env:
+      # pnpm 版本必须与 lockfile 格式匹配：CNB 侧 Dockerfile.ci / setup.sh
+      # 同样固定 12.21.0，三处任一升级都要同步
+      PNPM_VERSION: 12.21.0
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: check tag matches tauri.conf.json version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          # 延续 CNB 流水线的发布纪律：tag 名必须与 tauri.conf.json 里的
+          # 版本号完全一致，否则 attachment 命名会互相矛盾，直接失败
+          TAG="${GITHUB_REF_NAME#v}"
+          CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$TAG" != "$CONF" ]; then
+            echo "::error::tag v$TAG 与 tauri.conf.json 版本 $CONF 不一致"
+            exit 1
+          fi
+          echo "版本校验通过: v$TAG"
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: install rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          # 缓存键带上矩阵维度，避免三平台互相覆盖
+          key: ${{ matrix.os }}
+          workspaces: src-tauri
+
+      - name: install linux dependencies (webkit2gtk etc.)
+        if: matrix.os == 'linux'
+        run: |
+          # Tauri v2 在 Linux 上的系统依赖（对照官方 22.04 清单），
+          # libayatana-appindicator 托盘图标需要
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev
+
+      - name: install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: build linux (deb)
+        if: matrix.os == 'linux'
+        run: pnpm tauri build --bundles deb
+
+      - name: build macos (dmg)
+        if: matrix.os == 'macos'
+        run: pnpm tauri build --bundles dmg
+
+      - name: build windows (nsis + msi)
+        if: matrix.os == 'windows'
+        # PowerShell 会把裸逗号当数组展开，这里走 cmd 语义要小心：
+        # 用 ${a}, 排除歧义的写法是重复 flag，与 CNB 侧 win-build.ps1 一致
+        shell: bash
+        run: pnpm tauri build --bundles nsis --bundles msi
+
+      - name: collect assets (linux)
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          mkdir -p release-assets
+          cp src-tauri/target/release/bundle/deb/*.deb "release-assets/zoro_${V}_linux_amd64.deb"
+          ( cd release-assets && sha256sum "zoro_${V}_linux_amd64.deb" > "zoro_${V}_linux_amd64.deb.sha256" )
+          ls -lh release-assets
+
+      - name: collect assets (macos)
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          mkdir -p release-assets
+          cp src-tauri/target/release/bundle/dmg/*.dmg "release-assets/zoro_${V}_macos_aarch64.dmg"
+          ( cd release-assets && shasum -a 256 "zoro_${V}_macos_aarch64.dmg" > "zoro_${V}_macos_aarch64.dmg.sha256" )
+          ls -lh release-assets
+
+      - name: collect assets (windows)
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          mkdir -p release-assets
+          # tauri 默认名形如 zoro_0.1.4_x64-setup.exe / zoro_0.1.4_x64_en-US.msi，
+          # 统一改成与 CNB 侧一致的 <os>_<arch> 命名
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe "release-assets/zoro_${V}_windows_amd64-setup.exe"
+          cp src-tauri/target/release/bundle/msi/*.msi "release-assets/zoro_${V}_windows_amd64.msi"
+          ( cd release-assets && for f in *; do sha256sum "$f" > "$f.sha256"; done )
+          ls -lh release-assets
+
+      - name: create release if missing
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 三个平台并行跑，release 可能已被先完成的平台创建；
+          # 视为已存在即可，保证幂等
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME 已存在"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "zoro $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+
+      - name: upload assets to release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # --clobber 允许重跑时覆盖同名附件（例如手动重跑修复上传）
+          gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          echo "== 已上传 =="
+          gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name'
+
+      - name: upload build artifacts (manual run only)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: zoro-${{ matrix.os }}
+          path: release-assets/*
+          if-no-files-found: error

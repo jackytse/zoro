@@ -40,13 +40,16 @@ fi
 
 # ---------- 2. 打包（.app + .dmg） ----------
 # tauri build 会先跑 beforeBuildCommand（pnpm build）再编译 release；
-# --bundles app,dmg 同时产出应用包与磁盘映像，一次编译不浪费
+# --bundles app,dmg 同时产出应用包与磁盘映像，一次编译不浪费。
+# 先清掉 bundle 输出目录：编译缓存卷里会残留旧版本的 deb/dmg/app，
+# 不清理的话后面的产物收集（ls | head -1）可能挑中上一次的旧包。
+TARGET_ROOT="${CARGO_TARGET_DIR:-src-tauri/target}"
+rm -rf "$TARGET_ROOT/release/bundle"
 start_at=$SECONDS
 pnpm exec tauri build --bundles app,dmg
 echo "打包耗时: $((SECONDS - start_at))s"
 
 # .app/.dmg 落盘位置同样跟随 CARGO_TARGET_DIR（自建 Mac 节点用 HOME 缓存卷增量编译）
-TARGET_ROOT="${CARGO_TARGET_DIR:-src-tauri/target}"
 APP_DIR="$TARGET_ROOT/release/bundle/macos"
 DMG_DIR="$TARGET_ROOT/release/bundle/dmg"
 APP="$(ls -d "$APP_DIR"/*.app | head -1)"
@@ -97,14 +100,13 @@ shasum -a 256 "$DMG"
 # 附件三件套：dmg（主安装包）、app.zip（免挂载解压即用）、dmg 的 sha256 指纹。
 if [[ "$REF" == v* ]]; then
   ASSET_DIR="release-assets"
-  mkdir -p "$ASSET_DIR"
+  rm -rf "$ASSET_DIR" && mkdir -p "$ASSET_DIR"
   # zip 用 ditto 打包：保留 macOS 元数据与代码签名，比 zip 命令更可靠
   ditto -c -k --keepParent "$APP" "$ASSET_DIR/$(basename "$APP").zip"
+  # dmg 与指纹文件一并收集到 ASSET_DIR，统一上传
+  cp "$DMG" "$ASSET_DIR/"
   ( cd "$ASSET_DIR" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256" )
-  bash ci/upload-release.sh \
-    "$DMG" \
-    "$ASSET_DIR/$(basename "$APP").zip" \
-    "$ASSET_DIR/$(basename "$DMG").sha256"
+  bash ci/upload-release.sh "$ASSET_DIR"/*
 else
   echo "非 tag 构建（$REF），跳过 release 上传"
 fi

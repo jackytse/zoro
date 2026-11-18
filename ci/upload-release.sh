@@ -12,7 +12,9 @@
 #     所以 Linux 与 mac 统一走 OpenAPI + curl，脚本对两端环境零依赖
 #     （只需 curl + node，两端都已具备）；
 #   - 附件同名时 overwrite=true 覆盖，重跑流水线幂等；
-#   - release 已存在时直接复用（GET 404 才 POST 创建），重跑不会报冲突。
+#   - release 已存在时直接复用（GET 404 才 POST 创建），重跑不会报冲突；
+#   - 所有请求显式检查状态码并在失败时打印响应体：CI 日志里能直接看到
+#     4xx/5xx 的原因，而不是 curl -f 静默退出码。
 set -euo pipefail
 
 API_BASE="${CNB_API_ENDPOINT:-https://api.cnb.cool}"
@@ -29,6 +31,17 @@ RELEASE_API="$API_BASE/$REPO_SLUG/-/releases"
 RESP_FILE="$(mktemp)"
 trap 'rm -f "$RESP_FILE"' EXIT
 
+# 非 2xx 时打印状态码与响应体并退出——CI 日志里能直接定位原因
+die_on_http_error() {
+  local code="$1" what="$2"
+  if [[ ! "$code" =~ ^2 ]]; then
+    echo "✗ ${what} 失败（HTTP ${code}），响应：" >&2
+    cat "$RESP_FILE" >&2
+    echo "" >&2
+    exit 1
+  fi
+}
+
 # ---------- 1. 确保 release 存在（已存在则复用，不存在则创建） ----------
 ensure_release() {
   local code
@@ -40,30 +53,30 @@ ensure_release() {
     return
   fi
 
-  if [[ "$code" == "404" ]]; then
-    # 创建 release：标题即 tag 名，置为最新版本；描述给一个可编辑的兜底文案
-    local body
-    body=$(node -e '
-      const tag = process.argv[1];
-      process.stdout.write(JSON.stringify({
-        tag_name: tag,
-        name: tag,
-        body: "## " + tag + "\n\n正式发布版本。变更内容详见仓库提交历史；安装包见下方 Assets。",
-        make_latest: "true",
-        draft: false,
-        prerelease: false,
-      }));
-    ' "$TAG")
-  curl -sf -X POST -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" -H "Content-Type: application/json" \
-    -d "$body" "$RELEASE_API" > "$RESP_FILE"
-    RELEASE_ID="$(node -p "JSON.parse(require('fs').readFileSync('$RESP_FILE')).id")"
-    echo "✓ release 已创建（id=${RELEASE_ID}）"
-    return
+  # 404 = 该 tag 还没有 release，走创建；其余状态码才是真正的错误
+  if [[ "$code" != "404" ]]; then
+    die_on_http_error "$code" "查询 release"
   fi
 
-  echo "查询 release 失败（HTTP ${code}）：" >&2
-  cat "$RESP_FILE" >&2
-  exit 1
+  # 创建 release：标题即 tag 名，置为最新版本；描述给一个可编辑的兜底文案
+  local body
+  body=$(node -e '
+    const tag = process.argv[1];
+    process.stdout.write(JSON.stringify({
+      tag_name: tag,
+      name: tag,
+      body: "## " + tag + "\n\n正式发布版本。变更内容详见仓库提交历史；安装包见下方 Assets。",
+      make_latest: "true",
+      draft: false,
+      prerelease: false,
+    }));
+  ' "$TAG")
+  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -X POST \
+    -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" -H "Content-Type: application/json" \
+    -d "$body" "$RELEASE_API")"
+  die_on_http_error "$code" "创建 release"
+  RELEASE_ID="$(node -p "JSON.parse(require('fs').readFileSync('$RESP_FILE')).id")"
+  echo "✓ release 已创建（id=${RELEASE_ID}）"
 }
 
 # ---------- 2. 上传单个附件（同名覆盖，幂等） ----------
@@ -80,7 +93,7 @@ upload_asset() {
   fi
 
   # 2.1 申请预签名上传地址
-  local payload
+  local payload code
   payload=$(node -e '
     process.stdout.write(JSON.stringify({
       asset_name: process.argv[1],
@@ -88,18 +101,22 @@ upload_asset() {
       overwrite: true,
     }));
   ' "${name}" "${size}")
-  curl -sf -X POST -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" -H "Content-Type: application/json" \
-    -d "$payload" "$RELEASE_API/$RELEASE_ID/asset-upload-url" > "$RESP_FILE"
+  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -X POST \
+    -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" -H "Content-Type: application/json" \
+    -d "$payload" "$RELEASE_API/$RELEASE_ID/asset-upload-url")"
+  die_on_http_error "$code" "申请上传地址（${name}）"
 
   local upload_url verify_url
   upload_url="$(node -p "JSON.parse(require('fs').readFileSync('$RESP_FILE')).upload_url")"
   verify_url="$(node -p "JSON.parse(require('fs').readFileSync('$RESP_FILE')).verify_url")"
 
-  # 2.2 预签名地址直传文件（无需鉴权头）
-  curl -sf -X PUT --upload-file "$file" "$upload_url"
+  # 2.2 预签名地址直传文件（无需鉴权头）；失败打印状态码便于排查代理/网络问题
+  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -X PUT --upload-file "$file" "$upload_url")"
+  die_on_http_error "$code" "上传附件（${name}）"
 
   # 2.3 确认上传（verify_url 即确认端点，带鉴权调一次即入库）
-  curl -sf -X POST -H "$AUTH_HEADER" "$verify_url"
+  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -X POST -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$verify_url")"
+  die_on_http_error "$code" "确认上传（${name}）"
 
   echo "✓ 附件已上传: ${name} ($(( size / 1024 / 1024 ))M)"
 }

@@ -37,7 +37,11 @@ if [[ "$REF" == v* ]]; then
 fi
 
 # ---------- 2. 打包 ----------
-# tauri build 会先跑 beforeBuildCommand（pnpm build），再编译 release 产物
+# tauri build 会先跑 beforeBuildCommand（pnpm build），再编译 release 产物。
+# 先清掉 bundle 输出目录：编译缓存卷里会残留旧版本的 deb，
+# 不清理的话后面的产物收集（ls | head -1）可能挑中上一次的旧包。
+TARGET_ROOT="${CARGO_TARGET_DIR:-src-tauri/target}"
+rm -rf "$TARGET_ROOT/release/bundle"
 start_at=$SECONDS
 pnpm exec tauri build --bundles deb
 echo "打包耗时: $((SECONDS - start_at))s"
@@ -45,7 +49,6 @@ echo "打包耗时: $((SECONDS - start_at))s"
 # ---------- 3. 产物校验 ----------
 # deb 落盘位置跟随 CARGO_TARGET_DIR：设置了缓存卷时 bundle 输出在
 # $CARGO_TARGET_DIR/release/bundle/ 下，而不是工作区内的 src-tauri/target/
-TARGET_ROOT="${CARGO_TARGET_DIR:-src-tauri/target}"
 DEB_DIR="$TARGET_ROOT/release/bundle/deb"
 DEB="$(ls "$DEB_DIR"/*.deb | head -1)"
 echo "产物: $DEB"
@@ -68,7 +71,7 @@ sha256sum "$DEB"
 # 时不发布，只验证链路。脚本内部幂等：release 已存在则复用，附件同名覆盖。
 if [[ "$REF" == v* ]]; then
   ASSET_DIR="release-assets"
-  mkdir -p "$ASSET_DIR"
+  rm -rf "$ASSET_DIR" && mkdir -p "$ASSET_DIR"
   cp "$DEB" "$ASSET_DIR/"
   # sha256 指纹文件与 deb 同名，方便下载后校验
   ( cd "$ASSET_DIR" && sha256sum "$(basename "$DEB")" > "$(basename "$DEB").sha256" )

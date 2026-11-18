@@ -38,7 +38,7 @@ main:
         # 自定义 CI 镜像：预装 Tauri Linux 系统库与 pnpm（见 Dockerfile.ci），
         # 由 ci-image 流水线在 Dockerfile.ci 变化时重建；此前 prepare 阶段
         # 每次都要在全新容器里 apt 装依赖，3 分钟起步
-        image: docker.cnb.cool/jackytse/zoro:ci
+        image: docker.cnb.cool/jackytse/docker:ci
         volumes:
           - /root/.rustup:copy-on-write
           - /root/.cargo:copy-on-write
@@ -55,18 +55,20 @@ main:
 
     # CI 预热镜像：把 Tauri 的 Linux 系统库固化进镜像（此前每个 push 都
     # 要在全新容器里 apt 安装，prepare 因此 3 分钟+）。仅在 Dockerfile.ci
-    # 变化时重建推送到 docker.cnb.cool/jackytse/zoro:ci
+    # 变化时重建；镜像存放在 jackytse/docker 仓库的同名制品
+    # （docker.cnb.cool/jackytse/docker:ci），也可用 api_trigger_docker 手动重建
     - name: ci-image
       ifModify:
         - Dockerfile.ci
       services:
         - docker
-      stages:
+      stages: &ci-image-stages
         - name: build and push ci image
           script: |
-            # CNB 流水线内置触发者凭据；推送制品库需显式登录（否则 403）
+            # CNB 流水线内置触发者凭据；推送制品库需显式登录（否则 403）。
+            # 制品归属于 jackytse/docker 仓库（触发者是其所有者，有推送权限）
             echo "${CNB_TOKEN}" | docker login "${CNB_DOCKER_REGISTRY}" -u "${CNB_TOKEN_USER_NAME:-cnb}" --password-stdin
-            IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:ci"
+            IMAGE="${CNB_DOCKER_REGISTRY}/jackytse/docker:ci"
             docker build -f Dockerfile.ci -t "$IMAGE" .
             docker push "$IMAGE"
             echo "✓ CI 镜像已更新: $IMAGE"
@@ -75,7 +77,7 @@ main:
     - name: pr-gate
       # 与 push 同一套环境，但缓存卷只读：PR（可能是外部贡献）不能写坏缓存
       docker:
-        image: docker.cnb.cool/jackytse/zoro:ci
+        image: docker.cnb.cool/jackytse/docker:ci
         volumes:
           - /root/.rustup:copy-on-write-read-only
           - /root/.cargo:copy-on-write-read-only
@@ -86,6 +88,14 @@ main:
           script: bash ci/setup.sh
         - name: build and test
           script: bash ci/test.sh
+
+  # 手动重建 CI 镜像（不打 push 也行）：
+  # cnb build start-build --event api_trigger_docker --branch main
+  api_trigger_docker:
+    - name: ci-image-manual
+      services:
+        - docker
+      stages: *ci-image-stages
 
   # 手动跑一次门禁：cnb build start-build --event api_trigger_check --branch main
   api_trigger_check:

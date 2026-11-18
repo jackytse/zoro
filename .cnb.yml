@@ -35,7 +35,10 @@ main:
       runner: &runner-linux
         cpus: 16
       docker: &ci-docker
-        image: node:22-bookworm
+        # 自定义 CI 镜像：预装 Tauri Linux 系统库与 pnpm（见 Dockerfile.ci），
+        # 由 ci-image 流水线在 Dockerfile.ci 变化时重建；此前 prepare 阶段
+        # 每次都要在全新容器里 apt 装依赖，3 分钟起步
+        image: docker.cnb.cool/jackytse/zoro:ci
         volumes:
           - /root/.rustup:copy-on-write
           - /root/.cargo:copy-on-write
@@ -72,7 +75,7 @@ main:
     - name: pr-gate
       # 与 push 同一套环境，但缓存卷只读：PR（可能是外部贡献）不能写坏缓存
       docker:
-        image: node:22-bookworm
+        image: docker.cnb.cool/jackytse/zoro:ci
         volumes:
           - /root/.rustup:copy-on-write-read-only
           - /root/.cargo:copy-on-write-read-only

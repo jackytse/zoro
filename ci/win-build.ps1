@@ -60,7 +60,48 @@ if (Test-Path $BundleDir) { Remove-Item -Recurse -Force $BundleDir }
 $StartAt = [DateTime]::Now
 pnpm exec tauri build --bundles nsis
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "== FAIL: nsis 打包失败（tauri 退出码 $LASTEXITCODE）" -ForegroundColor Red
+    # tauri 只报一句 "Failed to bundle app with makensis"，真实报错被吞掉。
+    # 这里做四项诊断，把根因打回 CI 日志：
+    #   1. NSIS 工具目录是否存在及内容（tauri 是否真的下载成功了）；
+    #   2. 每个文件是否带 Zone.Identifier（MOTW）——带标记的 exe 会被
+    #      SmartScreen 拦截，"Running makensis" 后 21ms 就挂正是这种症状；
+    #   3. 直接调用 makensis 抓真实 stderr/退出码；
+    #   4. Defender 检测历史里最近的威胁记录（杀软静默拦截的常见证据）。
+    $NsisToolDir = Join-Path $env:LOCALAPPDATA "tauri\NSIS"
+    Write-Host "== 诊断 1: NSIS 工具目录 $NsisToolDir =="
+    if (Test-Path $NsisToolDir) {
+        Get-ChildItem $NsisToolDir | ForEach-Object { Write-Host ("  {0}  {1} bytes" -f $_.Name, $_.Length) }
+    } else {
+        Write-Host "  目录不存在——tauri 未成功下载 NSIS"
+    }
+    Write-Host "== 诊断 2: Zone.Identifier（MOTW）检查 =="
+    Get-ChildItem $NsisToolDir -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+        if (Get-Item $_.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue) {
+            Write-Host "  MOTW: $($_.FullName)"
+        }
+    }
+    Write-Host "== 诊断 3: 直接调用 makensis =="
+    $Makensis = Join-Path $NsisToolDir "makensis.exe"
+    if (Test-Path $Makensis) {
+        $Out = & $Makensis -VERSION 2>&1
+        $Out | ForEach-Object { Write-Host "  $_" }
+        Write-Host "  makensis -VERSION 退出码: $LASTEXITCODE"
+        # 再跑一次真实打包命令复现，抓 stderr（tauri 调用时吞掉了）
+        $NsiFile = Join-Path $env:TEMP "zoro-diag.nsi"
+        "OutFile diag.exe" | Out-File $NsiFile -Encoding ascii
+        $Out2 = & $Makensis $NsiFile 2>&1
+        $Out2 | Select-Object -Last 10 | ForEach-Object { Write-Host "  $_" }
+        Write-Host "  makensis diag 退出码: $LASTEXITCODE"
+    } else {
+        Write-Host "  makensis.exe 不存在"
+    }
+    Write-Host "== 诊断 4: Defender 最近检测记录 =="
+    try {
+        Get-MpThreatDetection -ErrorAction Stop | Sort-Object InitialDetectionTime -Descending |
+            Select-Object -First 5 | ForEach-Object {
+                Write-Host ("  {0}  {1}  resources: {2}" -f $_.InitialDetectionTime, $_.ThreatStatusID, ($_.Resources -join ","))
+            }
+    } catch { Write-Host "  无法读取（$(($_.Exception.Message -split "`n")[0])）" }
     exit 1
 }
 $HasMsi = $false

@@ -30,6 +30,11 @@ RELEASE_API="$API_BASE/$REPO_SLUG/-/releases"
 # 临时响应文件：node 解析 JSON 时读这个文件，避免把长 JSON 塞进命令行参数
 RESP_FILE="$(mktemp)"
 trap 'rm -f "$RESP_FILE"' EXIT
+# Windows git-bash 下 mktemp 给出 POSIX 风格路径（/tmp/xxx），而脚本里的
+# node.exe 是 Windows 原生程序，会把它解析成 C:\tmp\xxx 导致 ENOENT；
+# 用 cygpath -m 转成 C:/xxx 形式（正斜杠可安全嵌进 JS 字符串）。
+# cygpath 只在 git-bash 里存在，Linux/mac 上该行自动跳过
+command -v cygpath >/dev/null 2>&1 && RESP_FILE="$(cygpath -m "$RESP_FILE")"
 
 # 非 2xx 时打印状态码与响应体并退出——CI 日志里能直接定位原因
 die_on_http_error() {

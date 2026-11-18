@@ -13,6 +13,9 @@
 //!   - 旧版：`recentPaths` 列表的 `<option value="路径">`
 //! - Android Studio：数据文件格式与 JetBrains 完全一致，只是根目录不同——
 //!   `~/Library/Application Support/Google/AndroidStudio<版本>/options/recentProjects.xml`
+//! - Zed：状态持久化在 `~/Library/Application Support/Zed/db/<db>/db.sqlite`
+//!   的 `kv_store` 表里，value 为序列化 blob，路径以明文嵌在字节流中——
+//!   按字节流扫描提取（见 scan_zed），不依赖 SQLite 解析库
 //!
 //! 设计约定：
 //! - 扫描是**只读**的，不会写入任何工具的数据文件；
@@ -21,7 +24,7 @@
 //!   保证设置页看到的导入候选全是新增项。
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 一条从本机工具记录里探测到的候选项目。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -62,6 +65,12 @@ pub fn scan(home: &Path, existing: &[(String, String)]) -> Vec<DetectedProject> 
   }
   // Android Studio 与 JetBrains 同构，但根目录在 Google/ 下，归到 android-studio
   for p in scan_jetbrains(&support.join("Google"), existing, "android-studio") {
+    if seen.insert(p.path.clone()) {
+      found.push(p);
+    }
+  }
+  // Zed：状态持久化在 SQLite kv_store 的 value blob 里（见 scan_zed 注释）
+  for p in scan_zed(&support.join("Zed"), home, existing) {
     if seen.insert(p.path.clone()) {
       found.push(p);
     }
@@ -310,6 +319,126 @@ fn jetbrains_tool_id(dir_name_lower: &str) -> Option<&'static str> {
     .iter()
     .find(|(prefix, _)| dir_name_lower.starts_with(prefix))
     .map(|(_, id)| *id)
+}
+
+/// 扫描 Zed 的最近项目。
+///
+/// Zed（0.19x 起从 Sled 迁移）把全部状态持久化在
+/// `~/Library/Application Support/Zed/db/<db>/db.sqlite`（及 `-wal`）的
+/// `kv_store` 表里，value 是序列化后的 blob，项目路径以明文直接出现在
+/// 字节流中。这里刻意不做完整的 SQLite 解析（避免为此引入 rusqlite
+/// 依赖，且 key 布局随版本变动），而是按字节流扫描：
+/// 1. 切出可打印 ASCII 连续段；
+/// 2. 在段内定位 home 前缀的出现位置；
+/// 3. 从该处向短处裁剪，第一个「真实存在的目录」且不是 home 本身的
+///    前缀即视为项目路径（blob 里路径后紧跟其他字段，串尾不可信）。
+///
+/// 只接受真实存在的目录，因此 Zed 里已删除项目的旧记录会被自动过滤；
+/// Zed 刚安装还没有打开过项目时，扫不出内容属正常现象。
+fn scan_zed(base: &Path, home: &Path, existing: &[(String, String)]) -> Vec<DetectedProject> {
+  let mut out = Vec::new();
+  let home_str = home.to_string_lossy().into_owned();
+
+  // 遍历 db/ 下的每个库目录（0-global、0-stable，未来可能新增），两个文件
+  // 都要扫：-wal 是预写日志，新写入的记录在 checkpoint 前只存在于这里
+  let Ok(dbs) = std::fs::read_dir(base.join("db")) else {
+    return out;
+  };
+  let mut files: Vec<PathBuf> = dbs
+    .filter_map(|e| e.ok())
+    .flat_map(|e| {
+      let p = e.path();
+      [p.join("db.sqlite"), p.join("db.sqlite-wal")]
+    })
+    .filter(|f| f.exists())
+    .collect();
+  // 排序保证跨文件的产出顺序稳定（同样的路径重复出现在多个文件里）
+  files.sort();
+
+  for file in files {
+    let Ok(bytes) = std::fs::read(&file) else {
+      continue;
+    };
+    for path in extract_home_dir_paths(&bytes, &home_str) {
+      if out.len() >= MAX_PER_SOURCE {
+        return out;
+      }
+      push_if_valid(&mut out, path, "zed", existing);
+    }
+  }
+  out
+}
+
+/// 从字节流里提取「home 前缀开头 + 真实存在的目录」路径，按出现顺序返回（去重）。
+fn extract_home_dir_paths(bytes: &[u8], home_str: &str) -> Vec<String> {
+  let mut out = Vec::new();
+  // 1. 切可打印 ASCII 段（0x20~0x7E）：blob 的二进制部分天然形成边界
+  let mut run_start = None;
+  for (i, b) in bytes.iter().chain(std::iter::once(&0u8)).enumerate() {
+    let printable = (0x20..=0x7e).contains(b);
+    if printable && run_start.is_none() {
+      run_start = Some(i);
+    } else if !printable {
+      if let Some(start) = run_start.take() {
+        extract_from_run(&bytes[start..i], home_str, &mut out);
+      }
+    }
+  }
+  out
+}
+
+/// 在一段可打印文本里查找 home 前缀并裁出存在的目录路径。
+fn extract_from_run(run: &[u8], home_str: &str, out: &mut Vec<String>) {
+  if run.len() > 8192 {
+    // 超长段（如整段 JSON）按行兜底拆开再找，避免漏掉深处的路径
+    for piece in std::str::from_utf8(run).unwrap_or("").split(['\n', '\r', '\t']) {
+      extract_from_run(piece.as_bytes(), home_str, out);
+    }
+    return;
+  }
+  let run_str = String::from_utf8_lossy(run);
+  let home = Path::new(home_str);
+  let mut search_from = 0usize;
+  while let Some(off) = run_str[search_from..].find(home_str) {
+    let start = search_from + off;
+    let tail = &run_str[start..];
+    if let Some(path) = longest_existing_dir_prefix(tail, home) {
+      if !out.contains(&path) {
+        out.push(path);
+      }
+    }
+    // 同一段里可能有多条路径，从下一个字符继续找
+    search_from = start + home_str.len();
+  }
+}
+
+/// 从字符串开头向短处裁剪，返回最长的「真实存在的目录」前缀。
+///
+/// 规则：
+/// - home 本身不算项目（blob 里任何含 home 的串裁到底都会命中 home）；
+/// - home 之后至少要有一级目录，避免把 home 的父目录误当项目；
+/// - 优先按 '/' 边界裁剪，找不到再逐字符裁（应对路径后紧跟非路径文本）。
+fn longest_existing_dir_prefix(tail: &str, home: &Path) -> Option<String> {
+  let bytes = tail.as_bytes();
+  let min_len = home.to_string_lossy().len();
+  // 生成候选前缀长度（从长到短）：全长（路径恰好占满整段）、'/' 边界
+  // （路径后紧跟其他路径/字段）、以及逐字符（路径后紧跟非路径文本）
+  let mut candidates: Vec<usize> = vec![bytes.len()];
+  candidates.extend((0..bytes.len()).filter(|&i| bytes[i] == b'/'));
+  candidates.extend((0..bytes.len()).rev());
+  candidates.sort_unstable_by(|a, b| b.cmp(a));
+  candidates.dedup();
+  for i in candidates {
+    if i <= min_len || !tail.is_char_boundary(i) {
+      continue;
+    }
+    let candidate = &tail[..i];
+    let p = Path::new(candidate);
+    if p.is_dir() && p != home && p.starts_with(home) {
+      return Some(candidate.to_string());
+    }
+  }
+  None
 }
 
 /// 统一的合法性检查后入列：目录必须存在，且（路径 + 工具）未被配置过。
@@ -676,5 +805,43 @@ mod tests {
     for p in &found {
       println!("  [{}] {} -> {}", p.tool_id, p.name, p.path);
     }
+  }
+
+  /// Zed：kv_store 的 value 是序列化 blob，路径以明文嵌在二进制里。
+  /// 伪造 db.sqlite 与 -wal 验证：字节流提取、串尾裁剪、跨文件去重、
+  /// 以及「home 本身不算项目」的守卫。
+  #[test]
+  fn scans_zed_sqlite_blobs() {
+    let tmp = std::env::temp_dir().join(format!("zoro-zed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let db_dir = tmp.join("Library/Application Support/Zed/db/0-global");
+    std::fs::create_dir_all(&db_dir).unwrap();
+
+    let proj_db = tmp.join("zed-db-proj");
+    let proj_wal = tmp.join("zed-wal-proj");
+    std::fs::create_dir_all(&proj_db).unwrap();
+    std::fs::create_dir_all(&proj_wal).unwrap();
+
+    // db.sqlite：路径后直接贴非路径文本（模拟 blob 相邻字段），且混入 home 本身
+    let blob_db = format!(
+      "\x02{}gibberish-tail\x03{}\x04",
+      proj_db.display(),
+      tmp.display()
+    );
+    std::fs::write(db_dir.join("db.sqlite"), blob_db).unwrap();
+    // -wal：另一条路径（应在 checkpoint 前只能从这里扫到）
+    let blob_wal = format!("\x01{}\x02", proj_wal.display());
+    std::fs::write(db_dir.join("db.sqlite-wal"), blob_wal).unwrap();
+
+    let found = scan(&tmp, &[]);
+
+    assert_eq!(found.len(), 2, "两个文件各提取一条：{found:?}");
+    assert!(found.iter().any(|p| p.path == proj_db.to_string_lossy()));
+    assert!(found.iter().any(|p| p.path == proj_wal.to_string_lossy()));
+    assert!(found.iter().all(|p| p.tool_id == "zed"));
+    // home 本身（blob 里出现过）不能被当成项目
+    assert!(!found.iter().any(|p| p.path == tmp.to_string_lossy()));
+
+    std::fs::remove_dir_all(&tmp).unwrap();
   }
 }

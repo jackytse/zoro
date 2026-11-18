@@ -303,7 +303,8 @@ pub const TOOL_CATALOG: [CatalogEntry; 18] = [
     id: "zed",
     name: "Zed",
     command: "zed",
-    args: &[],
+    // -n：与 vscode 同语义，在新窗口打开项目（CLI 未装时回落 open -a）
+    args: &["-n"],
     app_name: "Zed",
     icon: "i-lucide-zap",
     app_paths: &["/Applications/Zed.app", "~/Applications/Zed.app"],

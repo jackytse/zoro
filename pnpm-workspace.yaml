@@ -4,12 +4,15 @@ catalog:
 # 允许执行安装脚本的依赖白名单。
 # pnpm 12 起，全新安装（node_modules 为空）时若有依赖的构建脚本未获批准，
 # 会直接以 ERR_PNPM_IGNORED_BUILDS 失败——本地因为 node_modules/.modules.yaml
-# 里留有历史批准记录所以看不出来，CI 上必然踩到：
+# 里留有历史批准记录所以看不出来，CI 上必然踩到。
+# 注意键名：pnpm 12 用 allowBuilds（映射，值 true 表示放行）；
+# 旧版的 onlyBuiltDependencies 列表写法在 12 上会被当作未知配置忽略，
+# 白名单等于没写。这一点已在 CNB 上做过 A/B 对照验证。
 #   - esbuild：安装后需要落地平台二进制
 #   - vue-demi：安装后按当前 Vue 版本切换运行时文件
-onlyBuiltDependencies:
-  - esbuild
-  - vue-demi
+allowBuilds:
+  esbuild: true
+  vue-demi: true
 minimumReleaseAgeExclude:
   - "@oxc-project/runtime@0.159.0"
   - "@oxc-project/types@0.159.0"

@@ -650,7 +650,7 @@ export default { name: "SettingsView" };
               { label: t('settings.terminalTab'), value: 'tab' },
             ]"
             size="sm"
-            class="w-36 shrink-0"
+            class="w-44 shrink-0"
             :aria-label="t('settings.terminalMode')"
             @update:model-value="setTerminalMode"
           />
@@ -771,7 +771,7 @@ export default { name: "SettingsView" };
               :model-value="project.toolId"
               :items="toolOptions"
               size="sm"
-              class="w-36 shrink-0"
+              class="w-44 shrink-0"
               :aria-label="$t('settings.projectTool')"
               @update:model-value="(v: string) => changeTool(project.id, v)"
             />
@@ -870,7 +870,7 @@ export default { name: "SettingsView" };
               v-model="importTool[item.path]"
               :items="toolOptions"
               size="sm"
-              class="w-40 shrink-0"
+              class="w-44 shrink-0"
             />
           </label>
         </div>

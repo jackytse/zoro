@@ -79,7 +79,8 @@ onMounted(() => {
         </div>
       </header>
 
-      <main class="mx-auto w-full max-w-5xl flex-1 px-4 py-10">
+      <!-- 窗口尺寸缩小后留白同步收紧：py-10 -> py-6，去掉无意义的大宽度上限 -->
+      <main class="w-full flex-1 px-4 py-6">
         <RouterView />
       </main>
     </div>

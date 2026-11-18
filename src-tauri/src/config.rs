@@ -59,7 +59,8 @@ pub struct Config {
   /// 开机自动启动，默认开启；自启动时带 --hidden 参数最小化到托盘。
   #[serde(default = "default_true")]
   pub autostart: bool,
-  /// 终端打开方式："window" = 新窗口（默认），"existing" = 现有窗口（新标签页）。
+  /// 终端打开方式："window" = 新窗口（默认），"tab" = 新选项卡。
+  /// 旧版本的 "existing"（现有窗口）等价于现在的 "tab"，读取时统一归一化；
   /// 旧配置文件没有该字段时按默认值反序列化，不需要迁移。
   #[serde(default)]
   pub terminal_open_mode: Option<String>,
@@ -78,10 +79,11 @@ fn default_true() -> bool {
 /// Option<String> + None 处理为 window，而不是用 serde default 字符串，
 /// 这样「用户显式存过 existing」与「从未设置」在语义上都归一到 window/existing。
 impl Config {
-  /// 归一化后的终端打开方式：只可能是 "window" 或 "existing"
+  /// 归一化后的终端打开方式：只可能是 "window" 或 "tab"。
+  /// 旧版本的 "existing" 语义就是「在现有窗口里新开标签页」，映射为 "tab"。
   pub fn terminal_mode(&self) -> &str {
     match self.terminal_open_mode.as_deref() {
-      Some("existing") => "existing",
+      Some("existing") | Some("tab") => "tab",
       _ => "window",
     }
   }

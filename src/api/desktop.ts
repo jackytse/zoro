@@ -34,7 +34,7 @@ export interface DesktopConfig {
   globalShortcut: string | null;
   /** 开机自动启动（默认开启，自启动时静默驻留托盘） */
   autostart: boolean;
-  /** 终端打开方式："window" = 新窗口（默认），"existing" = 现有窗口 */
+  /** 终端打开方式："window" = 新窗口（默认），"tab" = 新选项卡（旧配置的 "existing" 同义） */
   terminalOpenMode: string | null;
   /** 界面语言："zh-CN" | "zh-TW" | "en"；null = 跟随系统语言 */
   locale: string | null;
@@ -65,8 +65,8 @@ export const desktop = {
 
   /** 在系统终端打开一个目录（最近项目悬停的终端图标）；方式读自配置 */
   openInTerminal: (path: string) => invoke<void>("open_in_terminal", { path }),
-  /** 设置终端打开方式："window"（新窗口，默认）或 "existing"（现有窗口） */
-  setTerminalMode: (mode: "window" | "existing") =>
+  /** 设置终端打开方式："window"（新窗口，默认）或 "tab"（新选项卡） */
+  setTerminalMode: (mode: "window" | "tab") =>
     invoke<DesktopConfig>("set_terminal_mode", { mode }),
   /**
    * 设置界面语言；null = 跟随系统。

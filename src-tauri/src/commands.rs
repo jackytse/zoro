@@ -232,27 +232,31 @@ pub fn show_main_window(app: AppHandle) -> Result<(), String> {
 }
 
 /// 在系统终端中打开指定目录（最近项目悬停出现的终端图标按钮）。
-/// 打开方式（新窗口/现有窗口）读自配置的 terminalOpenMode。
+/// 打开方式（新窗口/新选项卡）读自配置的 terminalOpenMode。
 #[tauri::command]
 pub fn open_in_terminal(state: State<'_, AppState>, path: String) -> Result<(), String> {
   let mode = state.config.lock().unwrap().terminal_mode().to_string();
   opener::open_in_terminal(&path, &mode)
 }
 
-/// 设置终端打开方式："window"（新窗口，默认）或 "existing"（现有窗口）。
+/// 设置终端打开方式："window"（新窗口，默认）或 "tab"（新选项卡）。
+/// 兼容旧版本的 "existing"（语义等价于 "tab"），收到时自动归一化。
 #[tauri::command]
 pub fn set_terminal_mode(
   app: AppHandle,
   state: State<'_, AppState>,
   mode: String,
 ) -> Result<Config, String> {
-  // 只接受两个合法值，其余直接拒绝，避免把垃圾数据写进配置文件
-  if mode != "window" && mode != "existing" {
-    return Err(format!("不支持的终端打开方式：{mode}"));
-  }
+  // 只接受合法值，其余直接拒绝，避免把垃圾数据写进配置文件；
+  // 旧值 "existing" 在这里就转成 "tab"，保证配置文件里只有新语义
+  let normalized = match mode.as_str() {
+    "window" => "window",
+    "tab" | "existing" => "tab",
+    _ => return Err(format!("不支持的终端打开方式：{mode}")),
+  };
   {
     let mut cfg = state.config.lock().unwrap();
-    cfg.terminal_open_mode = Some(mode);
+    cfg.terminal_open_mode = Some(normalized.to_string());
   }
   config::save(&state)?;
   broadcast(&app);

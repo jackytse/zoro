@@ -344,10 +344,17 @@ async function disableShortcut() {
 
 /* ---------- 通用设置：终端打开方式 ---------- */
 
+/** 展示用归一化：旧配置里的 "existing" 等价于 "tab"，避免 RadioGroup 匹配不到 */
+const terminalModeDisplay = computed<"window" | "tab">(
+  () => (config.value?.terminalOpenMode === "tab" || config.value?.terminalOpenMode === "existing"
+    ? "tab"
+    : "window"),
+);
+
 /** 设置终端打开方式；失败时重新拉取配置以回弹选项状态。
  *  RadioGroup 回调给的是宽泛 string，这里归一化成两个合法值 */
 async function setTerminalMode(mode: string) {
-  const value: "window" | "existing" = mode === "existing" ? "existing" : "window";
+  const value: "window" | "tab" = mode === "tab" ? "tab" : "window";
   try {
     config.value = await desktop.setTerminalMode(value);
   } catch (error) {
@@ -567,10 +574,10 @@ export default { name: "SettingsView" };
           </p>
         </div>
         <URadioGroup
-          :model-value="(config?.terminalOpenMode as 'window' | 'existing') ?? 'window'"
+          :model-value="terminalModeDisplay"
           :items="[
             { label: t('settings.terminalWindow'), value: 'window' },
-            { label: t('settings.terminalExisting'), value: 'existing' },
+            { label: t('settings.terminalTab'), value: 'tab' },
           ]"
           variant="card"
           orientation="horizontal"

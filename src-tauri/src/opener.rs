@@ -92,10 +92,12 @@ pub fn open_with_tool(tool: &Tool, path: &str) -> Result<(), String> {
 /// 这正是「打开了但目录不对」的根因。所以改用 AppleScript 明确 cd：
 ///
 /// - iTerm：`create window / tab with default profile` + `write text "cd ..."`
-/// - Terminal：`do script "cd ..."`（不带 window 参数即开新窗口）
+/// - Terminal：`do script "cd ..."`（不带窗口参数即开新窗口）；
+///   新选项卡需要借助 System Events 发 ⌘T（需要「辅助功能」权限）
 ///
-/// mode："window" = 新窗口（默认）；"existing" = 现有窗口（iTerm 开新标签页，
-/// Terminal 写入最前面的窗口）。应用没装 / 无窗口时逐级降级兜底。
+/// mode："window" = 新窗口（默认）；"tab" = 新选项卡（旧版 "existing" 同义）。
+/// 选项卡失败（应用没装 / 无现有窗口 / 缺辅助功能权限）时逐级降级成新窗口，
+/// 目录正确永远优先于窗口形态偏好。
 pub fn open_in_terminal(path: &str, mode: &str) -> Result<(), String> {
   let target = Path::new(path);
   if !target.exists() {
@@ -109,24 +111,24 @@ pub fn open_in_terminal(path: &str, mode: &str) -> Result<(), String> {
   #[cfg(target_os = "macos")]
   {
     let cd = format!("cd {}", shell_quote(path));
-    let new_window = mode != "existing";
+    let new_window = mode == "window";
 
-    // 依次尝试 iTerm → Terminal.app。AppleScript 控制应用需要 macOS 的
-    // 「自动化」授权：首次调用系统会弹权限确认，拒绝时脚本报错并走降级。
-    let attempts = [
-      ("iTerm", iterm_script(&cd, new_window)),
-      ("Terminal", terminal_script(&cd, new_window)),
-    ];
-    for (app, script) in &attempts {
+    // 依次尝试（AppleScript 控制应用需要 macOS 的「自动化」授权，
+    // 首次调用系统会弹权限确认，拒绝时脚本报错并自动降级）：
+    // - tab 模式：iTerm 选项卡 → Terminal 选项卡 → 都失败退回新窗口形态
+    // - window 模式：iTerm 新窗口 → Terminal 新窗口
+    let mut attempts: Vec<(&str, String)> = Vec::new();
+    if !new_window {
+      attempts.push(("iTerm 选项卡", iterm_script(&cd, false)));
+      attempts.push(("Terminal 选项卡", terminal_script(&cd, false, true)));
+    }
+    attempts.push(("iTerm 新窗口", iterm_script(&cd, true)));
+    attempts.push(("Terminal 新窗口", terminal_script(&cd, true, false)));
+
+    for (label, script) in &attempts {
       match osascript(script) {
         Ok(()) => return Ok(()),
-        Err(err) => log::warn!("AppleScript 启动 {app} 失败：{err}"),
-      }
-    }
-    // Terminal 的「现有窗口」在没有任何窗口时会报错，降级成新窗口再试一次
-    if !new_window {
-      if osascript(&terminal_script(&cd, true)).is_ok() {
-        return Ok(());
+        Err(err) => log::warn!("AppleScript 启动 {label} 失败：{}", enrich_osascript_error(&err)),
       }
     }
     // 自动化权限被拒（用户点了「不允许」/ 从未授权）时，用 open 兜底：
@@ -187,7 +189,23 @@ fn apple_escape(text: &str) -> String {
   text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// iTerm 的 AppleScript：新窗口 / 在现有窗口里开新标签页。
+/// 把底层 AppleScript 错误翻译成可行动的提示：
+/// - `-10004 privilege violation`：几乎总是进程被沙箱/受限环境包裹（比如
+///   从带沙箱的终端里启动的 dev 进程），Apple Events 被系统拦截；
+/// - `-1743`：TCC 自动化权限被拒绝。
+/// 日志里带上这两种判别信息，避免排查时再走弯路。
+#[cfg(target_os = "macos")]
+fn enrich_osascript_error(err: &str) -> String {
+  if err.contains("-10004") || err.to_lowercase().contains("privilege violation") {
+    format!("{err}（进程似乎运行在沙箱/受限环境中，Apple Events 被系统拦截；请从用户自己的终端启动应用）")
+  } else if err.contains("-1743") {
+    format!("{err}（自动化权限被拒绝，请到 系统设置 → 隐私与安全性 → 自动化 中允许 Zoro）")
+  } else {
+    err.to_string()
+  }
+}
+
+/// iTerm 的 AppleScript：new_window = true 开新窗口，false 在现有窗口开新标签页。
 #[cfg(target_os = "macos")]
 fn iterm_script(cd: &str, new_window: bool) -> String {
   let cmd = apple_escape(cd);
@@ -202,16 +220,19 @@ fn iterm_script(cd: &str, new_window: bool) -> String {
   }
 }
 
-/// Terminal.app 的 AppleScript：do script 不带 window 参数即开新窗口；
-/// 「现有窗口」写入最前面的窗口（无窗口时由调用方降级重试）。
+/// Terminal.app 的 AppleScript。
+/// - new_window = true：`do script` 不带窗口参数即开新窗口；
+/// - new_window = false（新选项卡）：借助 System Events 发 ⌘T 开标签页
+///   （需要「辅助功能」权限），再把 cd 写进最前面的窗口（即新标签页）。
 #[cfg(target_os = "macos")]
-fn terminal_script(cd: &str, new_window: bool) -> String {
+fn terminal_script(cd: &str, new_window: bool, tab_via_keystroke: bool) -> String {
   let cmd = apple_escape(cd);
-  if new_window {
-    format!("tell application \"Terminal\" to do script \"{cmd}\"")
-  } else {
-    format!("tell application \"Terminal\" to do script \"{cmd}\" in front window")
+  if new_window || !tab_via_keystroke {
+    return format!("tell application \"Terminal\" to do script \"{cmd}\"");
   }
+  format!(
+    "tell application \"Terminal\"\n  activate\n  tell application \"System Events\" to keystroke \"t\" using command down\n  delay 0.3\n  do script \"{cmd}\" in window 1\nend tell"
+  )
 }
 
 /// 在登录 shell 里探测命令是否存在（返回 bool，不抛错）。

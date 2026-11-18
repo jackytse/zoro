@@ -78,19 +78,6 @@ pub fn detect_terminal_tools() -> Vec<(&'static str, &'static str, &'static str,
     .collect()
 }
 
-/// 从扫描结果里选出推荐默认项：优先 iTerm2（开发者最常用），
-/// 未安装时回落到系统自带 Terminal。任何 macOS 上 Terminal 都存在，
-/// 返回值总是可用。
-pub fn recommended_terminal_tool() -> &'static str {
-  let scan = detect_terminal_tools();
-  for (id, _, _, installed) in &scan {
-    if *installed && *id == "iterm" {
-      return "iterm";
-    }
-  }
-  "terminal"
-}
-
 /// 用给定工具打开一个已存在的路径。
 pub fn open_with_tool(tool: &Tool, path: &str) -> Result<(), String> {
   // 终端类工具语义特殊，直接复用终端打开链路（含单应用选定 + 降级）
@@ -158,6 +145,9 @@ pub fn open_with_tool(tool: &Tool, path: &str) -> Result<(), String> {
 /// （iTerm2 优先）。所选应用未安装时自动回落到另一个，保证总有结果。
 /// 选项卡失败（无现有窗口 / 缺辅助功能权限）时逐级降级成新窗口，
 /// 目录正确永远优先于窗口形态偏好。
+// mode 仅 macOS 分支消费（决定窗口/选项卡形态）；Linux 暂不支持终端打开，
+// 用 cfg_attr 关掉未使用告警而不是删参数——保持两个平台签名一致
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn open_in_terminal(path: &str, mode: &str, preferred: Option<&str>) -> Result<(), String> {
   let target = Path::new(path);
   if !target.exists() {

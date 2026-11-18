@@ -684,15 +684,18 @@ mod tests {
       ..Default::default()
     };
     sync_installed_tools(&mut cfg);
-    // macOS 上 Terminal.app 必然存在，所以同步后至少要有 terminal
+    // macOS 上 Terminal.app 必然存在，所以同步后至少要有 terminal，清单非空
     #[cfg(target_os = "macos")]
-    assert!(
-      cfg.tools.iter().any(|t| t.id == "terminal"),
-      "Terminal.app 在 macOS 上必装，同步后必须出现在工具清单：{:?}",
-      cfg.tools.iter().map(|t| &t.id).collect::<Vec<_>>()
-    );
-    // 非空性：任何平台上同步结果都不应为空
-    assert!(!cfg.tools.is_empty(), "同步后的工具清单不能为空");
+    {
+      assert!(
+        cfg.tools.iter().any(|t| t.id == "terminal"),
+        "Terminal.app 在 macOS 上必装，同步后必须出现在工具清单：{:?}",
+        cfg.tools.iter().map(|t| &t.id).collect::<Vec<_>>()
+      );
+      assert!(!cfg.tools.is_empty(), "同步后的工具清单不能为空");
+    }
+    // 非 macOS（含 CI 的纯净 Linux 容器）可能一个目录工具都探测不到，
+    // 同步结果为空是预期行为——不空断言只在 macOS 上成立，不能通用
   }
 
   /// 工具同步：不在目录里的用户自定义工具原样保留。

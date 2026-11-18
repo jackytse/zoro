@@ -13,7 +13,10 @@ mod shortcut;
 mod tray;
 
 use config::AppState;
-use tauri::{Manager, RunEvent, WindowEvent};
+// RunEvent 仅 macOS/Windows 的 Reopen 分支消费，Linux 上必须裁掉导入
+#[cfg(any(target_os = "macos", windows))]
+use tauri::RunEvent;
+use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::ManagerExt as _;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

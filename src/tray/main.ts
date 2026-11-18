@@ -1,4 +1,7 @@
 import "../assets/css/main.css";
+// 必须在 main.css 之后引入：覆盖 preflight 给 body 设的不透明背景，
+// 否则透明窗口会画出直角黑底（圆角被盖住、四周出黑边）
+import "./tray.css";
 
 import { createApp } from "vue";
 import ui from "@nuxt/ui/vue-plugin";

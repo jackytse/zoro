@@ -1,0 +1,58 @@
+# ============================================================
+# 云原生构建（CNB）流水线
+#
+# 触发点：
+#   1. main 分支 push         → 全量测试（前端构建/类型检查 + Rust 单测）
+#   2. main 分支 Pull Request → 同上，作为合入门禁
+#   3. 任意 tag 推送（版本发布）→ 全量测试 + Tauri 桌面安装包构建，
+#      三步全部通过才算一次成功的发布测试
+#
+# 环境：node:22-bookworm 自带 Node/npm；Rust 用 rustup 装在镜像里，
+# /root/.rustup 与 /root/.cargo 挂 copy-on-write 数据卷做缓存，
+# 二次运行时工具链准备阶段大幅提速。
+# 具体的装依赖/跑测试逻辑抽在 ci/setup.sh 与 ci/test.sh。
+# ============================================================
+
+main:
+  push:
+    - name: test
+      docker: &ci-docker
+        image: node:22-bookworm
+        volumes:
+          - /root/.rustup:copy-on-write
+          - /root/.cargo:copy-on-write
+      stages:
+        - name: prepare environment
+          script: bash ci/setup.sh
+        - name: run tests
+          script: bash ci/test.sh
+
+  pull_request:
+    - name: pr-check
+      # &ci-docker 定义锚点，后面直接复用同一份环境配置
+      docker: *ci-docker
+      stages:
+        - name: prepare environment
+          script: bash ci/setup.sh
+        - name: run tests
+          script: bash ci/test.sh
+
+# 「$」为兜底分支键，配合 tag_push 事件即：任何 tag 推送都触发发布测试
+$:
+  tag_push:
+    - name: release-test
+      docker: *ci-docker
+      stages:
+        - name: prepare environment
+          script: bash ci/setup.sh
+        - name: run tests
+          script: bash ci/test.sh
+        - name: build desktop bundles
+          script: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            pnpm run desktop:build
+            # 构建成功后列出安装包产物，作为发布测试通过的凭证
+            ls -la src-tauri/target/release/bundle/deb
+      failStages:
+        - name: report failure
+          script: echo "版本发布测试未通过，请检查上方失败阶段日志"

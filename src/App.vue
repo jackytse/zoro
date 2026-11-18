@@ -20,17 +20,17 @@ function toggleColorMode() {
     <div class="flex min-h-screen flex-col bg-default text-default">
       <!--
         macOS 用 Overlay 标题栏（原生红绿灯悬浮在内容上，无标题文字）。
-        仿 Tiny RDM 的紧凑标题栏：高 40px，标题水平居中，红绿灯经
-        trafficLightPosition 精确落在同一水平线上。
-        data-tauri-drag-region 只作用于挂载元素本身，按钮不挂以免吞掉点击；
-        居中标题块用 pointer-events-none 让事件落到 header 上，整条都能拖。
+        布局对齐 Tiny RDM：标题（图标 + 应用名）紧跟在红绿灯右侧左对齐，
+        不居中；红绿灯经 trafficLightPosition 与 40px 标题栏垂直居中。
+        data-tauri-drag-region 只作用于挂载元素本身，按钮不挂以免吞掉点击。
       -->
       <header
         class="sticky top-0 z-10 h-10 border-b border-default bg-default/80 backdrop-blur"
         data-tauri-drag-region
       >
+        <!-- left-[80px]：红绿灯从 x=16 开始、宽约 52px，80px 起正好留出间距 -->
         <div
-          class="pointer-events-none absolute inset-0 flex items-center justify-center gap-1.5 text-sm font-semibold select-none"
+          class="pointer-events-none absolute inset-y-0 left-20 flex items-center gap-1.5 text-sm font-semibold select-none"
           data-tauri-drag-region
         >
           <UIcon name="i-lucide-hexagon" class="size-4 text-primary" />

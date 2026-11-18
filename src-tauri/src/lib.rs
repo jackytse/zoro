@@ -59,6 +59,13 @@ pub fn run() {
       tray::create_tray(app.handle())?;
       tray::create_popup_window(app.handle())?;
 
+      // 纯托盘应用：不显示 Dock 图标（macOS 的 Accessory 模式）。
+      // 必须在 setup 里调用——事件循环启动后切换会无效或不生效。
+      // 隐藏 Dock 后 RunEvent::Reopen 不会再触发，主窗口改由
+      // 托盘菜单「显示主窗口」与弹窗「设置」入口唤起。
+      #[cfg(target_os = "macos")]
+      app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
       // 按配置注册全局快捷键；占用/非法组合只记日志，不阻塞启动
       if let Err(err) = shortcut::apply(app.handle()) {
         log::warn!("全局快捷键注册失败：{err}");

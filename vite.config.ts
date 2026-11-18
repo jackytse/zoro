@@ -3,7 +3,6 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig, lazyPlugins } from "vite-plus";
 import vue from "@vitejs/plugin-vue";
 import ui from "@nuxt/ui/vite";
-import vueDevTools from "vite-plugin-vue-devtools";
 
 // Tauri 在移动端调试时会通过该变量下发局域网地址
 const host = process.env.TAURI_DEV_HOST;
@@ -21,7 +20,7 @@ export default defineConfig({
   },
   // Nuxt UI 的 Vite 插件内部注册了 unplugin-auto-import / unplugin-vue-components，
   // 会生成 auto-imports.d.ts、components.d.ts，因此必须和其他插件一起交给 lazyPlugins
-  plugins: lazyPlugins(() => [vue(), ui(), vueDevTools()]),
+  plugins: lazyPlugins(() => [vue(), ui()]),
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

@@ -1,0 +1,13 @@
+/*
+ * 托盘弹窗专用样式（只由 src/tray/main.ts 引入，不影响主窗口）。
+ *
+ * 弹窗窗口在 Rust 侧开了 transparent(true)，由 TrayPopup 根元素画圆角卡片，
+ * 阴影交给系统窗口阴影。但 @nuxt/ui 的 preflight 给 body 设了
+ * background-color: var(--ui-bg)——不透明的 body 会画出整个直角矩形：
+ * 圆角被盖住，深色模式下四角还透出黑边。这里把文档各层背景全部清透明。
+ */
+html,
+body,
+#tray {
+  background: transparent !important;
+}

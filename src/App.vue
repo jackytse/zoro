@@ -18,9 +18,24 @@ function toggleColorMode() {
   <!-- UApp 提供 toast / tooltip 等全局浮层的挂载点，必须包在最外层 -->
   <UApp>
     <div class="flex min-h-screen flex-col bg-default text-default">
-      <header class="sticky top-0 z-10 border-b border-default bg-default/80 backdrop-blur">
-        <div class="mx-auto flex h-14 w-full max-w-5xl items-center gap-6 px-4">
-          <span class="flex items-center gap-2 text-base font-semibold">
+      <!--
+        macOS 用 Overlay 标题栏（原生红绿灯悬浮在内容上，无标题文字）。
+        data-tauri-drag-region 让顶部区域接管窗口拖拽；注意该属性只作用于
+        挂载它的元素本身，子元素（如 logo 文字）也要挂一份，按钮则不挂以免吞掉点击。
+      -->
+      <header
+        class="sticky top-0 z-10 border-b border-default bg-default/80 backdrop-blur"
+        data-tauri-drag-region
+      >
+        <!-- pl-20 给左上角原生红绿灯留位，避免 logo 被压住 -->
+        <div
+          class="mx-auto flex h-14 w-full max-w-5xl items-center gap-6 pl-24 pr-4"
+          data-tauri-drag-region
+        >
+          <span
+            class="flex items-center gap-2 text-base font-semibold select-none"
+            data-tauri-drag-region
+          >
             <UIcon name="i-lucide-hexagon" class="size-5 text-primary" />
             zoro
           </span>

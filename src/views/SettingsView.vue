@@ -847,6 +847,13 @@ export default { name: "SettingsView" };
       v-model:open="importOpen"
       :title="t('settings.importTitle')"
       :description="scanSummary || t('settings.importPickDesc')"
+      :ui="{
+        // Nuxt UI 的 modal body 默认自带 overflow-y-auto：内容（全选栏 +
+        // max-h-80 列表）超高时 body 自己出一条原生大滚动条，和列表的
+        // 覆盖式滑块叠成两条。这里关掉 body 的滚动，让滚动只发生在
+        // OverlayScrollbar 视口内（弹窗总高 < 视口高，body 不需要滚）
+        body: 'overflow-y-visible',
+      }"
     >
       <template #body>
         <!-- 全选栏固定在滚动区外，列表很长时也能随时全选/取消全选 -->

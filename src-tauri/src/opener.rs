@@ -58,6 +58,56 @@ pub fn open_with_tool(tool: &Tool, path: &str) -> Result<(), String> {
   ))
 }
 
+/// 用系统终端打开一个目录（最近项目悬停的终端图标入口）。
+///
+/// 选择策略：macOS 上依次尝试 iTerm → Terminal.app（`open -a` 不依赖 PATH，
+/// 但必须用 output() 检查退出码——应用不存在时 open 仍以非零退出报错）；
+/// Windows 上用 `cmd start` 指定工作目录拉起新命令行窗口。
+pub fn open_in_terminal(path: &str) -> Result<(), String> {
+  let target = Path::new(path);
+  if !target.exists() {
+    return Err(format!("路径不存在或已被移动：{path}"));
+  }
+  // 只有目录才能作为终端工作目录，文件路径直接拒绝并说明原因
+  if !target.is_dir() {
+    return Err(format!("不是目录，无法在终端打开：{path}"));
+  }
+
+  #[cfg(target_os = "macos")]
+  {
+    // iTerm 优先：目标用户群体（开发者）多装了 iTerm；没有则退回系统自带 Terminal
+    for app in ["iTerm", "Terminal"] {
+      match Command::new("open").arg("-a").arg(app).arg(target).output() {
+        Ok(out) if out.status.success() => return Ok(()),
+        Ok(out) => {
+          log::warn!("open -a {app} 失败：{}", String::from_utf8_lossy(&out.stderr).trim())
+        }
+        Err(err) => log::warn!("无法执行 open -a {app}：{err}"),
+      }
+    }
+    return Err("未找到可用的终端应用（iTerm / Terminal）".into());
+  }
+
+  #[cfg(target_os = "windows")]
+  {
+    // start 后第一个空参数是窗口标题占位；/D 让新 cmd 的工作目录落在项目目录
+    match Command::new("cmd")
+      .args(["/C", "start", "", "/D"])
+      .arg(target)
+      .arg("cmd")
+      .spawn()
+    {
+      Ok(_) => Ok(()),
+      Err(err) => Err(format!("打开终端失败：{err}")),
+    }
+  }
+
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  {
+    Err("当前平台暂不支持从终端打开目录".into())
+  }
+}
+
 /// 在登录 shell 里探测命令是否存在（返回 bool，不抛错）。
 #[cfg(unix)]
 fn resolve_via_login_shell(command: &str) -> bool {

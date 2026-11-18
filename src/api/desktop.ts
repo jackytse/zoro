@@ -58,6 +58,9 @@ export const desktop = {
   removeProject: (id: string) => invoke<DesktopConfig>("remove_project", { id }),
   /** 打开项目；成功后后端会隐藏弹窗并广播 config-changed */
   openProject: (id: string) => invoke<DesktopConfig>("open_project", { id }),
+
+  /** 在系统终端打开一个目录（最近项目悬停的终端图标） */
+  openInTerminal: (path: string) => invoke<void>("open_in_terminal", { path }),
   /**
    * 设置全局快捷键；null = 恢复平台默认，"" = 禁用。
    * 失败时 reject 中文错误（组合冲突 / 无法解析）。

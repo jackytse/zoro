@@ -148,6 +148,7 @@ pub fn run() {
       commands::set_autostart,
       commands::remove_project,
       commands::open_project,
+      commands::open_in_terminal,
       commands::show_main_window,
       commands::hide_tray_popup,
       commands::quit_app,

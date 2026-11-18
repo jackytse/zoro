@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
-import { useToast } from "@nuxt/ui/composables";
 import { open } from "@tauri-apps/plugin-dialog";
 import { desktop, type DesktopConfig, type DetectedProject } from "../api/desktop";
 import ToolIcon from "../components/ToolIcon.vue";
+import { useNotify } from "../composables/useNotify";
 
-const toast = useToast();
+const notify = useNotify();
 
 const config = ref<DesktopConfig | null>(null);
 const isLoading = ref(true);
@@ -37,7 +37,7 @@ async function browseFolder() {
       form.value.path = selected;
     }
   } catch (error) {
-    toast.add({ title: "打开目录选择器失败", description: String(error), color: "error" });
+    notify("error", "打开目录选择器失败", { description: String(error) });
   }
 }
 
@@ -52,7 +52,7 @@ async function loadConfig() {
   try {
     config.value = await desktop.getConfig();
   } catch (error) {
-    toast.add({ title: "读取配置失败", description: String(error), color: "error" });
+    notify("error", "读取配置失败", { description: String(error) });
   } finally {
     isLoading.value = false;
   }
@@ -60,7 +60,7 @@ async function loadConfig() {
 
 async function addProject() {
   if (formError.value) {
-    toast.add({ title: formError.value, color: "warning" });
+    notify("warning", formError.value);
     return;
   }
   isSubmitting.value = true;
@@ -70,12 +70,12 @@ async function addProject() {
       path: form.value.path,
       toolId: form.value.toolId,
     });
-    toast.add({ title: "已添加项目", color: "success" });
+    notify("success", "已添加项目");
     // 只清空输入，保留上次选择的工具方便连续添加
     form.value.name = "";
     form.value.path = "";
   } catch (error) {
-    toast.add({ title: "添加失败", description: String(error), color: "error" });
+    notify("error", "添加失败", { description: String(error) });
   } finally {
     isSubmitting.value = false;
   }
@@ -84,9 +84,9 @@ async function addProject() {
 async function removeProject(id: string, name: string) {
   try {
     config.value = await desktop.removeProject(id);
-    toast.add({ title: `已移除「${name}」`, color: "success" });
+    notify("success", `已移除「${name}」`);
   } catch (error) {
-    toast.add({ title: "移除失败", description: String(error), color: "error" });
+    notify("error", "移除失败", { description: String(error) });
   }
 }
 
@@ -94,13 +94,9 @@ async function removeProject(id: string, name: string) {
 async function openProject(id: string, name: string) {
   try {
     config.value = await desktop.openProject(id);
-    toast.add({ title: `已用工具打开「${name}」`, color: "success" });
+    notify("success", `已用工具打开「${name}」`);
   } catch (error) {
-    toast.add({
-      title: `打开「${name}」失败`,
-      description: String(error),
-      color: "error",
-    });
+    notify("error", `打开「${name}」失败`, { description: String(error) });
   }
 }
 
@@ -162,11 +158,11 @@ async function scanProjects() {
   try {
     const items = await desktop.scanRecentProjects();
     if (items.length === 0) {
-      toast.add({
-        title: "没有扫描到新的最近项目",
-        description: "本机工具的记录都已配置过，或这些工具尚未在本机使用。",
-        color: "info",
-      });
+      notify(
+        "info",
+        "没有扫描到新的最近项目",
+        { description: "本机工具的记录都已配置过，或这些工具尚未在本机使用。" },
+      );
       return;
     }
     scanItems.value = items;
@@ -175,7 +171,7 @@ async function scanProjects() {
     importTool.value = Object.fromEntries(items.map((i) => [i.path, i.toolId]));
     importOpen.value = true;
   } catch (error) {
-    toast.add({ title: "扫描失败", description: String(error), color: "error" });
+    notify("error", "扫描失败", { description: String(error) });
   } finally {
     isScanning.value = false;
   }
@@ -202,14 +198,12 @@ async function importSelected() {
   importOpen.value = false;
 
   if (ok > 0) {
-    toast.add({
-      title: `已导入 ${ok} 个项目`,
+    notify("success", `已导入 ${ok} 个项目`, {
       description: failures.length ? `${failures.length} 条失败，详情见后续提示` : undefined,
-      color: "success",
     });
   }
   for (const message of failures.slice(0, 3)) {
-    toast.add({ title: message, color: "error", duration: 8000 });
+    notify("error", message, { duration: 8000 });
   }
 }
 
@@ -288,14 +282,10 @@ async function saveShortcut() {
   if (!preview) return;
   try {
     config.value = await desktop.setGlobalShortcut(preview);
-    toast.add({ title: "全局快捷键已更新", color: "success" });
+    notify("success", "全局快捷键已更新");
     stopRecording();
   } catch (error) {
-    toast.add({
-      title: "设置快捷键失败",
-      description: String(error),
-      color: "error",
-    });
+    notify("error", "设置快捷键失败", { description: String(error) });
   }
 }
 
@@ -303,10 +293,10 @@ async function saveShortcut() {
 async function resetShortcut() {
   try {
     config.value = await desktop.setGlobalShortcut(null);
-    toast.add({ title: "已恢复默认快捷键", color: "success" });
+    notify("success", "已恢复默认快捷键");
     stopRecording();
   } catch (error) {
-    toast.add({ title: "操作失败", description: String(error), color: "error" });
+    notify("error", "操作失败", { description: String(error) });
   }
 }
 
@@ -314,10 +304,10 @@ async function resetShortcut() {
 async function disableShortcut() {
   try {
     config.value = await desktop.setGlobalShortcut("");
-    toast.add({ title: "全局快捷键已禁用", color: "success" });
+    notify("success", "全局快捷键已禁用");
     stopRecording();
   } catch (error) {
-    toast.add({ title: "操作失败", description: String(error), color: "error" });
+    notify("error", "操作失败", { description: String(error) });
   }
 }
 
@@ -327,12 +317,9 @@ async function disableShortcut() {
 async function toggleAutostart(enabled: boolean) {
   try {
     config.value = await desktop.setAutostart(enabled);
-    toast.add({
-      title: enabled ? "已开启开机自启" : "已关闭开机自启",
-      color: "success",
-    });
+    notify("success", enabled ? "已开启开机自启" : "已关闭开机自启");
   } catch (error) {
-    toast.add({ title: "设置失败", description: String(error), color: "error" });
+    notify("error", "设置失败", { description: String(error) });
     config.value = await desktop.getConfig();
   }
 }
@@ -551,15 +538,25 @@ export default { name: "SettingsView" };
             </UButton>
           </template>
           <template v-else>
+            <!-- 降级类操作用 neutral，与右侧主动作「修改」区分主次 -->
             <UButton
               v-if="config?.globalShortcut === ''"
               size="sm"
+              color="neutral"
               variant="soft"
               @click="resetShortcut"
             >
               恢复默认
             </UButton>
-            <UButton v-else size="sm" variant="soft" @click="disableShortcut">禁用</UButton>
+            <UButton
+              v-else
+              size="sm"
+              color="neutral"
+              variant="soft"
+              @click="disableShortcut"
+            >
+              禁用
+            </UButton>
             <UButton size="sm" variant="soft" icon="i-lucide-pencil-line" @click="startRecording">
               修改
             </UButton>

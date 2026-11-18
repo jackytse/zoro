@@ -35,7 +35,8 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
   let menu = Menu::with_items(
     app,
     &[
-      &MenuItem::with_id(app, "show-main", "显示主窗口", true, None::<&str>)?,
+      // 右键菜单第一项就是设置：菜单文案与弹窗底部入口保持一致
+      &MenuItem::with_id(app, "show-main", "设置", true, None::<&str>)?,
       &MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?,
     ],
   )?;

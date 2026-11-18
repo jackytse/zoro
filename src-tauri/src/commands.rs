@@ -231,6 +231,12 @@ pub fn show_main_window(app: AppHandle) -> Result<(), String> {
   Ok(())
 }
 
+/// 在系统终端中打开指定目录（最近项目悬停出现的终端图标按钮）。
+#[tauri::command]
+pub fn open_in_terminal(path: String) -> Result<(), String> {
+  opener::open_in_terminal(&path)
+}
+
 /// 隐藏托盘弹窗（Esc 键 / 设置跳转时使用）。
 #[tauri::command]
 pub fn hide_tray_popup(app: AppHandle) -> Result<(), String> {

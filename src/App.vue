@@ -35,7 +35,7 @@ function toggleColorMode() {
           data-tauri-drag-region
         >
           <UIcon name="i-lucide-hexagon" class="size-4 text-primary" />
-          zoro
+          Zoro
         </div>
 
         <div class="absolute inset-y-0 right-2 flex items-center">

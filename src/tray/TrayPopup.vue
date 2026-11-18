@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { useToast } from "@nuxt/ui/composables";
+import { useNotify } from "../composables/useNotify";
 import { desktop, type DesktopConfig, type Project } from "../api/desktop";
 import ToolIcon from "../components/ToolIcon.vue";
 
-const toast = useToast();
+const notify = useNotify();
 
 /** 配置快照；null 表示还在加载首屏 */
 const config = ref<DesktopConfig | null>(null);
@@ -30,11 +30,7 @@ async function loadConfig() {
   try {
     config.value = await desktop.getConfig();
   } catch (error) {
-    toast.add({
-      title: "读取配置失败",
-      description: String(error),
-      color: "error",
-    });
+    notify("error", "读取配置失败", { description: String(error) });
   } finally {
     isLoading.value = false;
   }
@@ -47,10 +43,8 @@ async function openProject(project: Project) {
     await desktop.openProject(project.id);
   } catch (error) {
     // 打开失败必须给用户明确反馈：显示工具名 + 后端给出的原因
-    toast.add({
-      title: `无法用 ${tool?.name ?? "所选工具"} 打开「${project.name}」`,
+    notify("error", `无法用 ${tool?.name ?? "所选工具"} 打开「${project.name}」`, {
       description: String(error),
-      color: "error",
     });
   }
 }
@@ -60,7 +54,7 @@ async function goSettings() {
   try {
     await desktop.showMainWindow();
   } catch (error) {
-    toast.add({ title: "打开设置失败", description: String(error), color: "error" });
+    notify("error", "打开设置失败", { description: String(error) });
   }
 }
 
@@ -69,13 +63,29 @@ async function quitApp() {
   try {
     await desktop.quitApp();
   } catch (error) {
-    toast.add({ title: "退出失败", description: String(error), color: "error" });
+    notify("error", "退出失败", { description: String(error) });
+  }
+}
+
+/** 在系统终端里打开项目目录（图标按钮触发） */
+async function openInTerminal(project: Project) {
+  try {
+    await desktop.openInTerminal(project.path);
+    notify("success", `已在终端打开「${project.name}」`);
+  } catch (error) {
+    notify("error", "在终端打开失败", { description: String(error) });
   }
 }
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") {
     void desktop.hideTrayPopup();
+    return;
+  }
+  // Cmd/Ctrl + ,：macOS 通用「打开设置」快捷键，弹窗打开时也能直达设置窗口
+  if (event.key === "," && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    void goSettings();
   }
 }
 
@@ -161,9 +171,17 @@ onBeforeUnmount(() => {
               <span class="shrink-0 text-xs text-dimmed">
                 {{ formatTime(project.lastOpenedAt) }}
               </span>
-              <UIcon
-                name="i-lucide-arrow-up-right"
-                class="size-4 shrink-0 text-dimmed opacity-0 transition-opacity group-hover:opacity-100"
+              <!-- 悬停出现的终端入口：在系统终端打开项目目录；
+                   click.stop 避免触发整行的「用 IDE 打开」 -->
+              <UButton
+                icon="i-lucide-square-terminal"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                :aria-label="`在终端打开 ${project.name}`"
+                title="在终端打开"
+                @click.stop="openInTerminal(project)"
               />
             </button>
           </li>

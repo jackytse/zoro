@@ -53,10 +53,6 @@ function toggleColorMode() {
       <main class="mx-auto w-full max-w-5xl flex-1 px-4 py-10">
         <RouterView />
       </main>
-
-      <footer class="border-t border-default py-4 text-center text-xs text-muted">
-        Vite+ · Vue 3 · Nuxt UI · VueUse · Tauri
-      </footer>
     </div>
   </UApp>
 </template>

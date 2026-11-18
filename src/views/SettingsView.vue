@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { desktop, type DesktopConfig, type DetectedProject } from "../api/desktop";
 import ToolIcon from "../components/ToolIcon.vue";
 import { useNotify } from "../composables/useNotify";
+import { formatRelativeTime } from "../utils/time";
 
 const notify = useNotify();
 
@@ -90,11 +91,11 @@ async function removeProject(id: string, name: string) {
   }
 }
 
-/** 在设置页也能直接试一下打开是否成功，避免等到托盘里才发现配置错误 */
+/** 在设置页也能直接试一下打开是否成功，避免等到托盘里才发现配置错误。
+ *  成功不打扰：IDE 窗口弹起本身就是反馈，失败才提示原因 */
 async function openProject(id: string, name: string) {
   try {
-    config.value = await desktop.openProject(id);
-    notify("success", `已用工具打开「${name}」`);
+    await desktop.openProject(id);
   } catch (error) {
     notify("error", `打开「${name}」失败`, { description: String(error) });
   }
@@ -311,6 +312,20 @@ async function disableShortcut() {
   }
 }
 
+/* ---------- 通用设置：终端打开方式 ---------- */
+
+/** 设置终端打开方式；失败时重新拉取配置以回弹选项状态。
+ *  RadioGroup 回调给的是宽泛 string，这里归一化成两个合法值 */
+async function setTerminalMode(mode: string) {
+  const value: "window" | "existing" = mode === "existing" ? "existing" : "window";
+  try {
+    config.value = await desktop.setTerminalMode(value);
+  } catch (error) {
+    notify("error", "设置终端打开方式失败", { description: String(error) });
+    config.value = await desktop.getConfig();
+  }
+}
+
 /* ---------- 通用设置：开机自启 ---------- */
 
 /** 切换开机自启；失败时重新拉取配置以回弹开关状态 */
@@ -430,6 +445,10 @@ export default { name: "SettingsView" };
             <span class="block truncate text-sm font-medium">{{ project.name }}</span>
             <span class="block truncate text-xs text-muted">{{ project.path }}</span>
           </span>
+          <!-- 最近打开时间：与托盘弹窗同一套相对时间文案 -->
+          <span class="shrink-0 text-xs text-dimmed">
+            {{ formatRelativeTime(project.lastOpenedAt) }}
+          </span>
           <UBadge color="neutral" variant="subtle" size="sm">
             {{ config!.tools.find((t) => t.id === project.toolId)?.name ?? "未知工具" }}
           </UBadge>
@@ -492,6 +511,26 @@ export default { name: "SettingsView" };
           :model-value="config?.autostart ?? false"
           aria-label="开机自动启动"
           @update:model-value="toggleAutostart"
+        />
+      </div>
+      <!-- 终端打开方式：影响最近项目悬停终端图标的行为 -->
+      <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
+        <div>
+          <p class="text-sm font-medium">终端打开方式</p>
+          <p class="mt-0.5 text-xs text-muted">
+            最近项目里点终端图标时，在新窗口还是现有窗口打开
+          </p>
+        </div>
+        <URadioGroup
+          :model-value="(config?.terminalOpenMode as 'window' | 'existing') ?? 'window'"
+          :items="[
+            { label: '新窗口', value: 'window' },
+            { label: '现有窗口', value: 'existing' },
+          ]"
+          variant="card"
+          orientation="horizontal"
+          aria-label="终端打开方式"
+          @update:model-value="setTerminalMode"
         />
       </div>
     </UCard>

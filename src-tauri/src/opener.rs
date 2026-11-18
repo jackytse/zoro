@@ -60,10 +60,16 @@ pub fn open_with_tool(tool: &Tool, path: &str) -> Result<(), String> {
 
 /// 用系统终端打开一个目录（最近项目悬停的终端图标入口）。
 ///
-/// 选择策略：macOS 上依次尝试 iTerm → Terminal.app（`open -a` 不依赖 PATH，
-/// 但必须用 output() 检查退出码——应用不存在时 open 仍以非零退出报错）；
-/// Windows 上用 `cmd start` 指定工作目录拉起新命令行窗口。
-pub fn open_in_terminal(path: &str) -> Result<(), String> {
+/// 为什么不用 `open -a iTerm <目录>`：iTerm2 不像 Terminal.app 那样支持
+/// 「文件夹作为文档」打开，路径参数会被忽略，新窗口只会落在 $HOME——
+/// 这正是「打开了但目录不对」的根因。所以改用 AppleScript 明确 cd：
+///
+/// - iTerm：`create window / tab with default profile` + `write text "cd ..."`
+/// - Terminal：`do script "cd ..."`（不带 window 参数即开新窗口）
+///
+/// mode："window" = 新窗口（默认）；"existing" = 现有窗口（iTerm 开新标签页，
+/// Terminal 写入最前面的窗口）。应用没装 / 无窗口时逐级降级兜底。
+pub fn open_in_terminal(path: &str, mode: &str) -> Result<(), String> {
   let target = Path::new(path);
   if !target.exists() {
     return Err(format!("路径不存在或已被移动：{path}"));
@@ -75,17 +81,28 @@ pub fn open_in_terminal(path: &str) -> Result<(), String> {
 
   #[cfg(target_os = "macos")]
   {
-    // iTerm 优先：目标用户群体（开发者）多装了 iTerm；没有则退回系统自带 Terminal
-    for app in ["iTerm", "Terminal"] {
-      match Command::new("open").arg("-a").arg(app).arg(target).output() {
-        Ok(out) if out.status.success() => return Ok(()),
-        Ok(out) => {
-          log::warn!("open -a {app} 失败：{}", String::from_utf8_lossy(&out.stderr).trim())
-        }
-        Err(err) => log::warn!("无法执行 open -a {app}：{err}"),
+    let cd = format!("cd {}", shell_quote(path));
+    let new_window = mode != "existing";
+
+    // 依次尝试 iTerm → Terminal.app。AppleScript 控制应用需要 macOS 的
+    // 「自动化」授权：首次调用系统会弹权限确认，拒绝时脚本报错并走降级。
+    let attempts = [
+      ("iTerm", iterm_script(&cd, new_window)),
+      ("Terminal", terminal_script(&cd, new_window)),
+    ];
+    for (app, script) in &attempts {
+      match osascript(script) {
+        Ok(()) => return Ok(()),
+        Err(err) => log::warn!("AppleScript 启动 {app} 失败：{err}"),
       }
     }
-    return Err("未找到可用的终端应用（iTerm / Terminal）".into());
+    // Terminal 的「现有窗口」在没有任何窗口时会报错，降级成新窗口再试一次
+    if !new_window {
+      if osascript(&terminal_script(&cd, true)).is_ok() {
+        return Ok(());
+      }
+    }
+    return Err("未能通过 iTerm / Terminal 打开目录（请检查是否已安装并授权自动化权限）".into());
   }
 
   #[cfg(target_os = "windows")]
@@ -105,6 +122,51 @@ pub fn open_in_terminal(path: &str) -> Result<(), String> {
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     Err("当前平台暂不支持从终端打开目录".into())
+  }
+}
+
+/// 执行一段 AppleScript，失败时返回 stderr 文本（便于日志定位）。
+#[cfg(target_os = "macos")]
+fn osascript(script: &str) -> Result<(), String> {
+  match Command::new("osascript").arg("-e").arg(script).output() {
+    Ok(out) if out.status.success() => Ok(()),
+    Ok(out) => Err(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+    Err(err) => Err(err.to_string()),
+  }
+}
+
+/// 把 cd 命令转成 AppleScript 字符串字面量里的安全文本：
+/// 反斜杠与双引号是 AppleScript 字符串仅有的两个转义字符；
+/// 单引号留给内层 shell（cd '...' 由 shell_quote 保证安全）。
+#[cfg(target_os = "macos")]
+fn apple_escape(text: &str) -> String {
+  text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// iTerm 的 AppleScript：新窗口 / 在现有窗口里开新标签页。
+#[cfg(target_os = "macos")]
+fn iterm_script(cd: &str, new_window: bool) -> String {
+  let cmd = apple_escape(cd);
+  if new_window {
+    format!(
+      "tell application \"iTerm\"\n  create window with default profile\n  tell current session of current window to write text \"{cmd}\"\nend tell"
+    )
+  } else {
+    format!(
+      "tell application \"iTerm\"\n  tell current window\n    set s to (create tab with default profile)\n    tell s to write text \"{cmd}\"\n  end tell\nend tell"
+    )
+  }
+}
+
+/// Terminal.app 的 AppleScript：do script 不带 window 参数即开新窗口；
+/// 「现有窗口」写入最前面的窗口（无窗口时由调用方降级重试）。
+#[cfg(target_os = "macos")]
+fn terminal_script(cd: &str, new_window: bool) -> String {
+  let cmd = apple_escape(cd);
+  if new_window {
+    format!("tell application \"Terminal\" to do script \"{cmd}\"")
+  } else {
+    format!("tell application \"Terminal\" to do script \"{cmd}\" in front window")
   }
 }
 

@@ -232,9 +232,31 @@ pub fn show_main_window(app: AppHandle) -> Result<(), String> {
 }
 
 /// 在系统终端中打开指定目录（最近项目悬停出现的终端图标按钮）。
+/// 打开方式（新窗口/现有窗口）读自配置的 terminalOpenMode。
 #[tauri::command]
-pub fn open_in_terminal(path: String) -> Result<(), String> {
-  opener::open_in_terminal(&path)
+pub fn open_in_terminal(state: State<'_, AppState>, path: String) -> Result<(), String> {
+  let mode = state.config.lock().unwrap().terminal_mode().to_string();
+  opener::open_in_terminal(&path, &mode)
+}
+
+/// 设置终端打开方式："window"（新窗口，默认）或 "existing"（现有窗口）。
+#[tauri::command]
+pub fn set_terminal_mode(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  mode: String,
+) -> Result<Config, String> {
+  // 只接受两个合法值，其余直接拒绝，避免把垃圾数据写进配置文件
+  if mode != "window" && mode != "existing" {
+    return Err(format!("不支持的终端打开方式：{mode}"));
+  }
+  {
+    let mut cfg = state.config.lock().unwrap();
+    cfg.terminal_open_mode = Some(mode);
+  }
+  config::save(&state)?;
+  broadcast(&app);
+  Ok(state.config.lock().unwrap().clone())
 }
 
 /// 隐藏托盘弹窗（Esc 键 / 设置跳转时使用）。

@@ -34,6 +34,8 @@ export interface DesktopConfig {
   globalShortcut: string | null;
   /** 开机自动启动（默认开启，自启动时静默驻留托盘） */
   autostart: boolean;
+  /** 终端打开方式："window" = 新窗口（默认），"existing" = 现有窗口 */
+  terminalOpenMode: string | null;
 }
 
 /** 从本机开发工具记录里探测到的候选项目 */
@@ -59,8 +61,11 @@ export const desktop = {
   /** 打开项目；成功后后端会隐藏弹窗并广播 config-changed */
   openProject: (id: string) => invoke<DesktopConfig>("open_project", { id }),
 
-  /** 在系统终端打开一个目录（最近项目悬停的终端图标） */
+  /** 在系统终端打开一个目录（最近项目悬停的终端图标）；方式读自配置 */
   openInTerminal: (path: string) => invoke<void>("open_in_terminal", { path }),
+  /** 设置终端打开方式："window"（新窗口，默认）或 "existing"（现有窗口） */
+  setTerminalMode: (mode: "window" | "existing") =>
+    invoke<DesktopConfig>("set_terminal_mode", { mode }),
   /**
    * 设置全局快捷键；null = 恢复平台默认，"" = 禁用。
    * 失败时 reject 中文错误（组合冲突 / 无法解析）。

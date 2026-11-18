@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useNotify } from "../composables/useNotify";
 import { desktop, type DesktopConfig, type Project } from "../api/desktop";
 import ToolIcon from "../components/ToolIcon.vue";
+import { formatRelativeTime } from "../utils/time";
 
 const notify = useNotify();
 
@@ -67,15 +68,18 @@ async function quitApp() {
   }
 }
 
-/** 在系统终端里打开项目目录（图标按钮触发） */
+/** 在系统终端里打开项目目录（图标按钮触发）。
+ *  成功不打扰：终端窗口弹起本身就是反馈，失败才提示原因 */
 async function openInTerminal(project: Project) {
   try {
     await desktop.openInTerminal(project.path);
-    notify("success", `已在终端打开「${project.name}」`);
   } catch (error) {
     notify("error", "在终端打开失败", { description: String(error) });
   }
 }
+
+/** 配置变更监听的取消函数；卸载时解绑，避免重复订阅 */
+let offConfigChanged: (() => void) | null = null;
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") {
@@ -88,19 +92,6 @@ function onKeydown(event: KeyboardEvent) {
     void goSettings();
   }
 }
-
-/** 相对时间展示，让「最近」有排序的直观感受 */
-function formatTime(ts: number | null): string {
-  if (!ts) return "未打开过";
-  const diff = Date.now() - ts;
-  const minute = 60_000;
-  if (diff < minute) return "刚刚";
-  if (diff < 60 * minute) return `${Math.floor(diff / minute)} 分钟前`;
-  if (diff < 24 * 60 * minute) return `${Math.floor(diff / (60 * minute))} 小时前`;
-  return new Date(ts).toLocaleDateString("zh-CN");
-}
-
-let offConfigChanged: (() => void) | null = null;
 
 onMounted(async () => {
   await loadConfig();
@@ -169,7 +160,7 @@ onBeforeUnmount(() => {
                 </span>
               </span>
               <span class="shrink-0 text-xs text-dimmed">
-                {{ formatTime(project.lastOpenedAt) }}
+                {{ formatRelativeTime(project.lastOpenedAt) }}
               </span>
               <!-- 悬停出现的终端入口：在系统终端打开项目目录；
                    click.stop 避免触发整行的「用 IDE 打开」 -->

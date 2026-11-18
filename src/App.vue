@@ -4,6 +4,7 @@ import { useColorMode } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { desktop, type DesktopConfig } from "./api/desktop";
 import { useAppTheme } from "./composables/useAppTheme";
+import OverlayScrollbar from "./components/OverlayScrollbar.vue";
 
 /**
  * 明暗主题：Nuxt UI 的组件样式跟着 html 上的 .dark 类走，
@@ -48,7 +49,13 @@ onMounted(() => {
   <!-- UApp 提供 toast / tooltip 等全局浮层的挂载点，必须包在最外层；
        toast 固定在窗口顶部居中；progress: false 关掉 toast 底部的倒计时进度条 -->
   <UApp :toaster="{ position: 'top-center', progress: false }">
-    <div class="flex min-h-screen flex-col bg-default text-default">
+    <!--
+      整窗布局：header 固定高度，内容区交给 OverlayScrollbar 滚动。
+      原来 sticky header + body 滚动的结构会暴露 body 的经典滚动条
+      （系统「始终显示滚动条」时永驻且占内容宽度），改为组件内滚动后
+      用 macOS 原生风格的覆盖式滑块替代。
+    -->
+    <div class="flex h-screen flex-col bg-default text-default">
       <!--
         macOS 用 Overlay 标题栏（原生红绿灯悬浮在内容上，无标题文字）。
         标题水平居中：absolute + inset-x-0 + 居中布局，与 macOS 原生窗口
@@ -56,7 +63,7 @@ onMounted(() => {
         data-tauri-drag-region 只作用于挂载元素本身，按钮不挂以免吞掉点击。
       -->
       <header
-        class="sticky top-0 z-10 h-10 border-b border-default bg-default/80 backdrop-blur"
+        class="relative z-10 h-10 shrink-0 border-b border-default bg-default/80 backdrop-blur"
         data-tauri-drag-region
       >
         <div
@@ -79,10 +86,12 @@ onMounted(() => {
         </div>
       </header>
 
-      <!-- 窗口尺寸缩小后留白同步收紧：py-10 -> py-6，去掉无意义的大宽度上限 -->
-      <main class="w-full flex-1 px-4 py-6">
-        <RouterView />
-      </main>
+      <!-- 内容滚动区：覆盖式滚动条默认隐藏，悬停/滚动时半透明淡入 -->
+      <OverlayScrollbar class="w-full flex-1">
+        <main class="w-full px-4 py-6">
+          <RouterView />
+        </main>
+      </OverlayScrollbar>
     </div>
   </UApp>
 </template>

@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { desktop, type DesktopConfig, type DetectedProject, type Project } from "../api/desktop";
 import { applyLocale, resolveLocale, LOCALE_LABELS, type AppLocale } from "../i18n";
 import ToolIcon from "../components/ToolIcon.vue";
+import OverlayScrollbar from "../components/OverlayScrollbar.vue";
 import { useNotify } from "../composables/useNotify";
 import { formatRelativeTime } from "../utils/time";
 
@@ -859,7 +860,8 @@ export default { name: "SettingsView" };
             {{ selectedCount }} / {{ scanItems.length }}
           </span>
         </div>
-        <div class="max-h-80 space-y-1 overflow-y-auto">
+        <OverlayScrollbar class="max-h-80">
+          <div class="space-y-1">
           <label
             v-for="item in scanItems"
             :key="item.path"
@@ -883,7 +885,8 @@ export default { name: "SettingsView" };
               class="w-44 shrink-0"
             />
           </label>
-        </div>
+          </div>
+        </OverlayScrollbar>
       </template>
       <template #footer>
         <div class="flex w-full items-center justify-end gap-3">

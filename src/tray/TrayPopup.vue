@@ -6,6 +6,7 @@ import { desktop, type DesktopConfig, type Project } from "../api/desktop";
 import { applyLocale, resolveLocale } from "../i18n";
 import { useAppTheme } from "../composables/useAppTheme";
 import ToolIcon from "../components/ToolIcon.vue";
+import OverlayScrollbar from "../components/OverlayScrollbar.vue";
 import { formatRelativeTime } from "../utils/time";
 
 const notify = useNotify();
@@ -132,7 +133,9 @@ onBeforeUnmount(() => {
         </UBadge>
       </header>
 
-      <main class="min-h-0 flex-1 overflow-y-auto p-2">
+      <!-- 列表滚动区：覆盖式滚动条，默认隐藏、悬停/滚动时半透明淡入 -->
+      <OverlayScrollbar class="min-h-0 flex-1">
+        <main class="p-2">
         <!-- 加载中 -->
         <div v-if="isLoading" class="flex h-full flex-col gap-2 p-2">
           <USkeleton v-for="i in 4" :key="i" class="h-12 rounded-lg" />
@@ -194,6 +197,7 @@ onBeforeUnmount(() => {
           </li>
         </ul>
       </main>
+      </OverlayScrollbar>
 
       <footer class="flex items-center gap-1 border-t border-default px-3 py-2">
         <UButton

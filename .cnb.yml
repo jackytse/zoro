@@ -4,8 +4,8 @@
 # 四条链路，都是为了「改动一进仓库就有机器替你把关」：
 #   1. main push            → 质量门禁（前端构建 + 类型检查 + Rust 单测）
 #   2. Pull Request         → 同一套门禁，作为合入前的检查
-#   3. api_trigger_release  → 手动完整发布：Linux deb + macOS .app/.dmg（不打 tag 也能验）
-#   4. tag push             → 发布链路：门禁 + 打包 Linux deb + macOS 应用 + 校验产物
+#   3. api_trigger_release  → 手动完整发布：Linux deb + macOS .app/.dmg（不打 tag 也能验，不发布）
+#   4. tag push             → 发布链路：打包 + 校验产物 + 建 release + 上传附件
 #
 # macOS 产物跑在根组织的自建 Mac 节点上（runner.namespace: group + tags 匹配）。
 # 自建节点限制（CNB 文档）：脚本直接跑在宿主机上——docker.image 不生效、

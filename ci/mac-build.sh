@@ -92,4 +92,21 @@ du -h "$APP"
 du -h "$DMG"
 shasum -a 256 "$DMG"
 
+# ---------- 7. 发布：建 release 并上传附件 ----------
+# 仅 tag_push（tag 名形如 vX.Y.Z）时上传；非 tag 构建只验证链路。
+# 附件三件套：dmg（主安装包）、app.zip（免挂载解压即用）、dmg 的 sha256 指纹。
+if [[ "$REF" == v* ]]; then
+  ASSET_DIR="release-assets"
+  mkdir -p "$ASSET_DIR"
+  # zip 用 ditto 打包：保留 macOS 元数据与代码签名，比 zip 命令更可靠
+  ditto -c -k --keepParent "$APP" "$ASSET_DIR/$(basename "$APP").zip"
+  ( cd "$ASSET_DIR" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256" )
+  bash ci/upload-release.sh \
+    "$DMG" \
+    "$ASSET_DIR/$(basename "$APP").zip" \
+    "$ASSET_DIR/$(basename "$DMG").sha256"
+else
+  echo "非 tag 构建（$REF），跳过 release 上传"
+fi
+
 echo "✓ macOS 发布测试通过（.app / .dmg）"

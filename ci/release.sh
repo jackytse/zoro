@@ -63,5 +63,19 @@ dpkg-deb -c "$DEB" | grep -E 'usr/bin/|\.desktop' || {
 du -h "$DEB"
 sha256sum "$DEB"
 
+# ---------- 4. 发布：建 release 并上传附件 ----------
+# 仅 tag_push（tag 名形如 vX.Y.Z）时上传；手动 api_trigger_release 跑分支
+# 时不发布，只验证链路。脚本内部幂等：release 已存在则复用，附件同名覆盖。
+if [[ "$REF" == v* ]]; then
+  ASSET_DIR="release-assets"
+  mkdir -p "$ASSET_DIR"
+  cp "$DEB" "$ASSET_DIR/"
+  # sha256 指纹文件与 deb 同名，方便下载后校验
+  ( cd "$ASSET_DIR" && sha256sum "$(basename "$DEB")" > "$(basename "$DEB").sha256" )
+  bash ci/upload-release.sh "$ASSET_DIR"/*
+else
+  echo "非 tag 构建（$REF），跳过 release 上传"
+fi
+
 echo "✓ 发布测试通过（Linux deb 链路）"
 echo "提示：macOS 安装包需在 mac 上执行 pnpm desktop:build 产出 .app/.dmg"

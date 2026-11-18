@@ -43,20 +43,27 @@ export PATH="$HOME/.cargo/bin:$PATH"
 rustc --version && cargo --version
 
 # ---------- 3. Tauri 的 Linux 系统依赖 ----------
-# cargo test / tauri build 都要链接 webkit2gtk 与 gtk，缺一个都编译不过；
-# libayatana-appindicator3 是托盘图标（Tauri tray-icon）在 Linux 上的依赖。
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  libwebkit2gtk-4.1-dev \
-  build-essential \
-  pkg-config \
-  curl \
-  wget \
-  file \
-  libxdo-dev \
-  libssl-dev \
-  libayatana-appindicator3-dev \
-  librsvg2-dev
+# 自定义 CI 镜像（docker.cnb.cool/jackytse/zoro:ci，见 Dockerfile.ci）已
+# 预装这批库；跑在基础镜像 node:22-bookworm 上时才真正安装。用 pkg-config
+# 探测 webkit2gtk-4.1：已装则整段跳过——此前无条件 apt-get update + install
+# 是 prepare 阶段吃掉 3 分钟的元凶（容器每次全新，/usr 不在缓存卷内）
+if ! pkg-config --exists webkit2gtk-4.1; then
+  echo "未检测到 webkit2gtk-4.1，通过 apt 安装 Tauri 系统依赖…"
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    libwebkit2gtk-4.1-dev \
+    build-essential \
+    pkg-config \
+    curl \
+    wget \
+    file \
+    libxdo-dev \
+    libssl-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev
+else
+  echo "Tauri 系统依赖已就绪（CI 镜像预装），跳过 apt 安装"
+fi
 
 # ---------- 4. 前端依赖 ----------
 # --frozen-lockfile：lockfile 与 package.json 不同步时立即失败；

@@ -61,6 +61,8 @@ echo "产物: $DMG"
 # Info.plist 里的 CFBundleShortVersionString 必须与应用版本一致，
 # 防止「改了配置但打包用了旧缓存」这类静默不一致
 PLIST_VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
+# 机器架构（arm64 / x86_64），用于附件命名；统一成 aarch64 与 tauri 的命名习惯一致
+MAC_ARCH="$(uname -m | sed 's/^x86_64$/amd64/; s/^arm64$/aarch64/')"
 if [[ "$PLIST_VER" != "$VERSION" ]]; then
   echo "Info.plist 版本 ($PLIST_VER) 与 tauri.conf.json ($VERSION) 不一致" >&2
   exit 1
@@ -101,11 +103,17 @@ shasum -a 256 "$DMG"
 if [[ "$REF" == v* ]]; then
   ASSET_DIR="release-assets"
   rm -rf "$ASSET_DIR" && mkdir -p "$ASSET_DIR"
+  # 附件名加上操作系统标识（tauri 默认名只有架构）：dmg 名形如
+  # zoro_0.1.3_aarch64.dmg → zoro_0.1.3_macos_aarch64.dmg
+  DMG_BASE="$(basename "$DMG")"
+  ASSET_DMG="$(echo "$DMG_BASE" | sed -E 's/_(aarch64|amd64|arm64)\.dmg$/_macos_\1.dmg/')"
+  # zip 命名与 dmg 对齐（带版本 + OS + 架构），不再是笼统的 zoro.app.zip
+  ASSET_ZIP="zoro_${PLIST_VER}_macos_${MAC_ARCH}.app.zip"
   # zip 用 ditto 打包：保留 macOS 元数据与代码签名，比 zip 命令更可靠
-  ditto -c -k --keepParent "$APP" "$ASSET_DIR/$(basename "$APP").zip"
+  ditto -c -k --keepParent "$APP" "$ASSET_DIR/$ASSET_ZIP"
   # dmg 与指纹文件一并收集到 ASSET_DIR，统一上传
-  cp "$DMG" "$ASSET_DIR/"
-  ( cd "$ASSET_DIR" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256" )
+  cp "$DMG" "$ASSET_DIR/$ASSET_DMG"
+  ( cd "$ASSET_DIR" && shasum -a 256 "$ASSET_DMG" > "$ASSET_DMG.sha256" )
   bash ci/upload-release.sh "$ASSET_DIR"/*
 else
   echo "非 tag 构建（$REF），跳过 release 上传"

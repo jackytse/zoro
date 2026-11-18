@@ -50,6 +50,24 @@ main:
         - name: report failure
           script: echo "质量门禁未通过：请按上方失败阶段的日志修复后重新提交"
 
+    # CI 预热镜像：把 Tauri 的 Linux 系统库固化进镜像（此前每个 push 都
+    # 要在全新容器里 apt 安装，prepare 因此 3 分钟+）。仅在 Dockerfile.ci
+    # 变化时重建推送到 docker.cnb.cool/jackytse/zoro:ci
+    - name: ci-image
+      ifModify:
+        - Dockerfile.ci
+      services:
+        - docker
+      stages:
+        - name: build and push ci image
+          script: |
+            # CNB 流水线内置触发者凭据；推送制品库需显式登录（否则 403）
+            echo "${CNB_TOKEN}" | docker login "${CNB_DOCKER_REGISTRY}" -u "${CNB_TOKEN_USER_NAME:-cnb}" --password-stdin
+            IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:ci"
+            docker build -f Dockerfile.ci -t "$IMAGE" .
+            docker push "$IMAGE"
+            echo "✓ CI 镜像已更新: $IMAGE"
+
   pull_request:
     - name: pr-gate
       # 与 push 同一套环境，但缓存卷只读：PR（可能是外部贡献）不能写坏缓存

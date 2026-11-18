@@ -1,0 +1,38 @@
+# CI 预热镜像（linux/amd64）。
+#
+# 为什么需要它：流水线容器每次都是全新实例，copy-on-write 缓存卷只覆盖
+# /root 下的目录，而 Tauri 的 Linux 系统库装在 /usr——旧流程每个 push
+# 都要重新 apt-get update + 装十几个包，prepare environment 因此吃掉
+# 3 分钟以上。把 apt 层固化进镜像后，prepare 只剩 pnpm install（命中
+# store 缓存卷，秒级）。
+#
+# 构建与推送由 .cnb.yml 的 ci-image 流水线负责（ifModify 监听本文件，
+# 只在内容变化时重建），推送到 docker.cnb.cool/jackytse/zoro:ci。
+#
+# 注意：Rust 工具链刻意不装进镜像——/root/.rustup、/root/.cargo 的
+# copy-on-write 卷挂载会覆盖镜像里的对应路径，装了也用不上；工具链
+# 仍由 ci/setup.sh 在缓存卷里维护（首次装、之后命中）。
+FROM node:22-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Tauri 在 Linux 上编译/打包的系统依赖（官方 Debian 清单）：
+# webkit2gtk / gtk 是编译链接的核心，libayatana-appindicator3 是托盘
+# 图标依赖，libxdo 用于窗口控制，librsvg 处理图标资源
+RUN apt-get update -qq \
+  && apt-get install -y -qq --no-install-recommends \
+    libwebkit2gtk-4.1-dev \
+    build-essential \
+    pkg-config \
+    curl \
+    wget \
+    file \
+    libxdo-dev \
+    libssl-dev \
+    libayatana-appindicator3-dev \
+    librsvg2-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+# pnpm 固定版本：lockfile 格式与 pnpm 主版本强相关，镜像内版本必须与
+# ci/setup.sh 里的 PNPM_VERSION 一致（setup.sh 的版本检测会直接命中跳过）
+RUN npm install -g pnpm@12.21.0

@@ -72,9 +72,13 @@ sha256sum "$DEB"
 if [[ "$REF" == v* ]]; then
   ASSET_DIR="release-assets"
   rm -rf "$ASSET_DIR" && mkdir -p "$ASSET_DIR"
-  cp "$DEB" "$ASSET_DIR/"
+  # 附件名加上操作系统标识（tauri 默认名只有架构）：同一 release 页里
+  # linux/macos 产物并排时一眼可辨。deb 名形如 zoro_0.1.3_amd64.deb
+  DEB_BASE="$(basename "$DEB")"
+  ASSET_DEB="$(echo "$DEB_BASE" | sed -E 's/_(amd64|arm64|aarch64)\.deb$/_linux_\1.deb/')"
+  cp "$DEB" "$ASSET_DIR/$ASSET_DEB"
   # sha256 指纹文件与 deb 同名，方便下载后校验
-  ( cd "$ASSET_DIR" && sha256sum "$(basename "$DEB")" > "$(basename "$DEB").sha256" )
+  ( cd "$ASSET_DIR" && sha256sum "$ASSET_DEB" > "$ASSET_DEB.sha256" )
   bash ci/upload-release.sh "$ASSET_DIR"/*
 else
   echo "非 tag 构建（$REF），跳过 release 上传"

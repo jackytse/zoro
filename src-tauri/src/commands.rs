@@ -170,6 +170,34 @@ pub fn open_project(
   Ok(snapshot)
 }
 
+/// 设置开机自动启动。enable() / disable() 均为幂等操作；
+/// 配置先行落盘，系统注册失败时回滚并抛错给前端 toast。
+#[tauri::command]
+pub fn set_autostart(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  enabled: bool,
+) -> Result<Config, String> {
+  use tauri_plugin_autostart::ManagerExt as _;
+
+  let previous = state.config.lock().unwrap().autostart;
+  state.config.lock().unwrap().autostart = enabled;
+
+  let result = if enabled {
+    app.autolaunch().enable()
+  } else {
+    app.autolaunch().disable()
+  };
+  if let Err(err) = result {
+    state.config.lock().unwrap().autostart = previous;
+    return Err(format!("设置开机自启失败：{err}"));
+  }
+
+  config::save(&state)?;
+  broadcast(&app);
+  Ok(state.config.lock().unwrap().clone())
+}
+
 /// 设置全局快捷键。
 /// - `None`：恢复平台默认（macOS ⌘+Shift+P / Windows Win+Shift+P）；
 /// - `Some("")`：禁用；

@@ -56,6 +56,14 @@ pub struct Config {
   /// None = 平台默认（⌘+Shift+P / Win+Shift+P）；Some("") = 禁用。
   #[serde(default)]
   pub global_shortcut: Option<String>,
+  /// 开机自动启动，默认开启；自启动时带 --hidden 参数最小化到托盘。
+  #[serde(default = "default_true")]
+  pub autostart: bool,
+}
+
+/// serde 默认值辅助：true
+fn default_true() -> bool {
+  true
 }
 
 /// 全局共享状态：配置本体 + 文件路径 + 托盘弹窗的显示时序记录。
@@ -111,6 +119,7 @@ impl Config {
       ],
       projects: Vec::new(),
       global_shortcut: None,
+      autostart: true,
     }
   }
 }

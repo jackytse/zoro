@@ -14,6 +14,7 @@ mod tray;
 
 use config::AppState;
 use tauri::{Manager, RunEvent, WindowEvent};
+use tauri_plugin_autostart::ManagerExt as _;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -39,6 +40,14 @@ pub fn run() {
           .build(),
       )?;
 
+      // 开机自启：自启动时携带 --hidden，登录后静默驻留托盘不弹窗口
+      app.handle().plugin(
+        tauri_plugin_autostart::init(
+          tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+          Some(vec!["--hidden"]),
+        ),
+      )?;
+
       // 加载/初始化配置并注册为全局状态，命令与托盘逻辑都从这里取数据
       let state = config::init(app.handle())?;
       app.manage(state);
@@ -50,6 +59,25 @@ pub fn run() {
       // 按配置注册全局快捷键；占用/非法组合只记日志，不阻塞启动
       if let Err(err) = shortcut::apply(app.handle()) {
         log::warn!("全局快捷键注册失败：{err}");
+      }
+
+      // 自启动场景（--hidden）：隐藏主窗口，静默驻留托盘
+      if std::env::args().any(|a| a == "--hidden") {
+        if let Some(main) = app.get_webview_window(tray::MAIN_LABEL) {
+          let _ = main.hide();
+        }
+      }
+
+      // 按配置同步系统自启动状态（enable 幂等，反复调用无副作用）
+      let want_autostart = app.state::<AppState>().config.lock().unwrap().autostart;
+      let autolaunch = app.autolaunch();
+      let result = if want_autostart {
+        autolaunch.enable()
+      } else {
+        autolaunch.disable()
+      };
+      if let Err(err) = result {
+        log::warn!("同步开机自启状态失败：{err}");
       }
       Ok(())
     })
@@ -79,6 +107,7 @@ pub fn run() {
       commands::scan_recent_projects,
       commands::add_project,
       commands::set_global_shortcut,
+      commands::set_autostart,
       commands::remove_project,
       commands::open_project,
       commands::show_main_window,

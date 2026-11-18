@@ -32,6 +32,8 @@ export interface DesktopConfig {
   projects: Project[];
   /** 全局快捷键；null = 平台默认，"" = 禁用，其余为组合字符串（如 "Super+Shift+P"） */
   globalShortcut: string | null;
+  /** 开机自动启动（默认开启，自启动时静默驻留托盘） */
+  autostart: boolean;
 }
 
 /** 从本机开发工具记录里探测到的候选项目 */
@@ -62,6 +64,8 @@ export const desktop = {
    */
   setGlobalShortcut: (shortcut: string | null) =>
     invoke<DesktopConfig>("set_global_shortcut", { shortcut }),
+  /** 设置开机自动启动；失败时 reject 中文错误 */
+  setAutostart: (enabled: boolean) => invoke<DesktopConfig>("set_autostart", { enabled }),
   showMainWindow: () => invoke<void>("show_main_window"),
   hideTrayPopup: () => invoke<void>("hide_tray_popup"),
   quitApp: () => invoke<void>("quit_app"),

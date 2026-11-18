@@ -278,6 +278,22 @@ async function disableShortcut() {
   }
 }
 
+/* ---------- 通用设置：开机自启 ---------- */
+
+/** 切换开机自启；失败时重新拉取配置以回弹开关状态 */
+async function toggleAutostart(enabled: boolean) {
+  try {
+    config.value = await desktop.setAutostart(enabled);
+    toast.add({
+      title: enabled ? "已开启开机自启" : "已关闭开机自启",
+      color: "success",
+    });
+  } catch (error) {
+    toast.add({ title: "设置失败", description: String(error), color: "error" });
+    config.value = await desktop.getConfig();
+  }
+}
+
 let offConfigChanged: (() => void) | null = null;
 
 onMounted(async () => {
@@ -416,6 +432,24 @@ export default { name: "SettingsView" };
           </span>
         </li>
       </ul>
+    </UCard>
+
+    <!-- 通用设置 -->
+    <UCard>
+      <template #header>
+        <p class="font-medium">通用</p>
+      </template>
+      <div class="flex items-center justify-between gap-4">
+        <div>
+          <p class="text-sm font-medium">开机自动启动</p>
+          <p class="mt-0.5 text-xs text-muted">登录系统后自动运行并最小化到托盘，不弹出主窗口</p>
+        </div>
+        <USwitch
+          :model-value="config?.autostart ?? false"
+          aria-label="开机自动启动"
+          @update:model-value="toggleAutostart"
+        />
+      </div>
     </UCard>
 
     <!-- 全局快捷键 -->

@@ -15,40 +15,37 @@ function toggleColorMode() {
 </script>
 
 <template>
-  <!-- UApp 提供 toast / tooltip 等全局浮层的挂载点，必须包在最外层 -->
-  <UApp>
+  <!-- UApp 提供 toast / tooltip 等全局浮层的挂载点，必须包在最外层；toast 固定在窗口顶部居中 -->
+  <UApp :toaster="{ position: 'top-center' }">
     <div class="flex min-h-screen flex-col bg-default text-default">
       <!--
         macOS 用 Overlay 标题栏（原生红绿灯悬浮在内容上，无标题文字）。
-        data-tauri-drag-region 让顶部区域接管窗口拖拽；注意该属性只作用于
-        挂载它的元素本身，子元素（如 logo 文字）也要挂一份，按钮则不挂以免吞掉点击。
+        仿 Tiny RDM 的紧凑标题栏：高 40px，标题水平居中，红绿灯经
+        trafficLightPosition 精确落在同一水平线上。
+        data-tauri-drag-region 只作用于挂载元素本身，按钮不挂以免吞掉点击；
+        居中标题块用 pointer-events-none 让事件落到 header 上，整条都能拖。
       -->
       <header
-        class="sticky top-0 z-10 border-b border-default bg-default/80 backdrop-blur"
+        class="sticky top-0 z-10 h-10 border-b border-default bg-default/80 backdrop-blur"
         data-tauri-drag-region
       >
-        <!-- pl-20 给左上角原生红绿灯留位，避免 logo 被压住 -->
         <div
-          class="mx-auto flex h-14 w-full max-w-5xl items-center gap-6 pl-24 pr-4"
+          class="pointer-events-none absolute inset-0 flex items-center justify-center gap-1.5 text-sm font-semibold select-none"
           data-tauri-drag-region
         >
-          <span
-            class="flex items-center gap-2 text-base font-semibold select-none"
-            data-tauri-drag-region
-          >
-            <UIcon name="i-lucide-hexagon" class="size-5 text-primary" />
-            zoro
-          </span>
+          <UIcon name="i-lucide-hexagon" class="size-4 text-primary" />
+          zoro
+        </div>
 
-          <div class="ml-auto">
-            <UButton
-              :icon="colorMode === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
-              color="neutral"
-              variant="ghost"
-              :aria-label="colorMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'"
-              @click="toggleColorMode"
-            />
-          </div>
+        <div class="absolute inset-y-0 right-2 flex items-center">
+          <UButton
+            :icon="colorMode === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
+            color="neutral"
+            variant="ghost"
+            size="xs"
+            :aria-label="colorMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'"
+            @click="toggleColorMode"
+          />
         </div>
       </header>
 

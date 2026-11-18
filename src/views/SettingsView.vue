@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref } from "vue";
 import { useToast } from "@nuxt/ui/composables";
 import { open } from "@tauri-apps/plugin-dialog";
 import { desktop, type DesktopConfig, type DetectedProject } from "../api/desktop";
+import ToolIcon from "../components/ToolIcon.vue";
 
 const toast = useToast();
 
@@ -125,6 +126,31 @@ const scanSummary = computed(() => {
 
 /** 勾选数量，导入按钮据此禁用 */
 const selectedCount = computed(() => Object.values(importSelection.value).filter(Boolean).length);
+
+/**
+ * 全选框的状态，三态：
+ * - true：全部候选已勾选；
+ * - false：一个都没勾（或没有候选）；
+ * - "indeterminate"：部分勾选（横杠图标），提示「还差几条」。
+ * reka-ui 的 CheckboxRoot 用 modelValue === "indeterminate" 表达第三态。
+ */
+const selectAllState = computed<boolean | "indeterminate">(() => {
+  const total = scanItems.value.length;
+  if (total === 0 || selectedCount.value === 0) return false;
+  return selectedCount.value >= total ? true : "indeterminate";
+});
+
+/**
+ * 全选 / 取消全选。
+ *
+ * 点击语义按「当前是否已全选」取反，而不是直接反转传进来的值：
+ * 第三态（部分选中）时点一下应当变成「全选」，这是列表批量选择的通用预期。
+ */
+function toggleSelectAll() {
+  const next = selectAllState.value !== true;
+  // 逐条写回，保持 importSelection 的 key 集合与候选列表一致（导入时按 key 取值）
+  importSelection.value = Object.fromEntries(scanItems.value.map((i) => [i.path, next]));
+}
 
 /** 工具 id → 展示名 */
 function toolLabel(id: string) {
@@ -407,7 +433,12 @@ export default { name: "SettingsView" };
           :key="project.id"
           class="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
         >
-          <UIcon name="i-lucide-folder-git-2" class="size-5 shrink-0 text-primary" />
+          <!-- 图标随项目绑定的开发工具变化：直接显示对应 IDE 的品牌图标 -->
+          <ToolIcon
+            :tool-id="project.toolId"
+            :fallback-icon="config!.tools.find((t) => t.id === project.toolId)?.icon"
+            icon-class="size-5 shrink-0"
+          />
           <span class="min-w-0 flex-1">
             <span class="block truncate text-sm font-medium">{{ project.name }}</span>
             <span class="block truncate text-xs text-muted">{{ project.path }}</span>
@@ -449,7 +480,7 @@ export default { name: "SettingsView" };
           :key="tool.id"
           class="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
         >
-          <UIcon :name="tool.icon" class="size-5 shrink-0 text-primary" />
+          <ToolIcon :tool-id="tool.id" :fallback-icon="tool.icon" icon-class="size-5 shrink-0" />
           <span class="min-w-0 flex-1">
             <span class="block text-sm font-medium">{{ tool.name }}</span>
             <span class="block truncate font-mono text-xs text-muted">
@@ -544,6 +575,17 @@ export default { name: "SettingsView" };
       :description="scanSummary || '选择要导入的项目'"
     >
       <template #body>
+        <!-- 全选栏固定在滚动区外，列表很长时也能随时全选/取消全选 -->
+        <div class="mb-2 flex items-center gap-2 border-b border-default pb-2">
+          <UCheckbox
+            :model-value="selectAllState"
+            label="全选"
+            @update:model-value="toggleSelectAll"
+          />
+          <span class="ml-auto text-xs text-muted">
+            {{ selectedCount }} / {{ scanItems.length }}
+          </span>
+        </div>
         <div class="max-h-80 space-y-1 overflow-y-auto">
           <label
             v-for="item in scanItems"
@@ -551,9 +593,10 @@ export default { name: "SettingsView" };
             class="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-elevated"
           >
             <UCheckbox v-model="importSelection[item.path]" />
-            <UIcon
-              :name="config?.tools.find((t) => t.id === item.toolId)?.icon ?? 'i-lucide-folder'"
-              class="size-5 shrink-0 text-primary"
+            <ToolIcon
+              :tool-id="item.toolId"
+              :fallback-icon="config?.tools.find((t) => t.id === item.toolId)?.icon"
+              icon-class="size-5 shrink-0"
             />
             <span class="min-w-0 flex-1">
               <span class="block truncate text-sm font-medium">{{ item.name }}</span>
@@ -571,7 +614,7 @@ export default { name: "SettingsView" };
       </template>
       <template #footer>
         <div class="flex w-full items-center justify-end gap-3">
-          <span class="mr-auto text-xs text-muted">已选 {{ selectedCount }} 项</span>
+          <!-- 数量已在 body 顶部的全选栏展示，这里只留操作按钮 -->
           <UButton color="neutral" variant="ghost" @click="importOpen = false"> 取消 </UButton>
           <UButton icon="i-lucide-check" :disabled="selectedCount === 0" @click="importSelected">
             导入 {{ selectedCount }} 项

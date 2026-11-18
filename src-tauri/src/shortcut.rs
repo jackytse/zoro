@@ -73,14 +73,16 @@ pub fn apply(app: &AppHandle) -> Result<(), String> {
 /// 快捷键触发：在托盘图标附近切换弹窗。
 /// 托盘 rect 拿不到（极端时序）时退化为系统默认屏顶部居中放置的虚拟热区。
 pub fn on_trigger(app: &AppHandle) {
-  let rect = app
-    .tray_by_id("main-tray")
+  // 借出托盘图标引用：macOS 上定位弹窗需要它访问内部 NSStatusItem
+  let tray_icon = app.tray_by_id(tray::TRAY_ID);
+  let rect = tray_icon
+    .as_ref()
     .and_then(|t| t.rect().ok())
     .flatten()
     .or_else(|| fallback_rect(app));
-  match rect {
-    Some(rect) => tray::toggle_popup(app, rect),
-    None => log::error!("无法确定弹窗位置：托盘与显示器信息均不可用"),
+  match (tray_icon.as_ref(), rect) {
+    (Some(icon), Some(rect)) => tray::toggle_popup(app, icon, rect),
+    _ => log::error!("无法确定弹窗位置：托盘与显示器信息均不可用"),
   }
 }
 

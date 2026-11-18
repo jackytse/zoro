@@ -5,6 +5,8 @@
 //!   - 新版（1.64+）：`<app>/User/globalStorage/state.vscdb`（SQLite），
 //!     `ItemTable` 表的 `history.recentlyOpenedPathsList` 键
 //!   - 旧版兜底：`<app>/User/globalStorage/storage.json` 的同名 JSON 结构
+//!   - 最新版（1.14x+，实测 1.146 已移除上述 key）：`<app>/User/workspaceStorage/<hash>/workspace.json`
+//!     ——按文件 mtime 近似「最近打开」排序
 //! - JetBrains 系列产品（IDEA / PyCharm / GoLand 等）：
 //!   `~/Library/Application Support/JetBrains/<产品版本>/options/recentProjects.xml`
 //!   - 新版：`additionalInfo` map 的 `<entry key="路径">`
@@ -60,7 +62,14 @@ pub fn scan(home: &Path, existing: &[(String, String)]) -> Vec<DetectedProject> 
 }
 
 /// 扫描 VS Code / Cursor。
-/// 新版最近记录在 state.vscdb（SQLite），storage.json 仅作旧版兜底。
+/// 最近记录的三个来源按可靠性依次尝试：
+/// 1. `state.vscdb` 的 `history.recentlyOpenedPathsList`（1.64 ~ 1.14x）；
+/// 2. `storage.json` 的同名结构（更老版本）；
+/// 3. `workspaceStorage/*/workspace.json`（**新版唯一可用来源**）。
+///
+/// 第 3 条是必需项而非兜底：实测 VS Code 1.146 的 ItemTable 里已经没有
+/// `history.recentlyOpenedPathsList` 这个 key，最近列表只体现为每个曾打开
+/// 过的窗口留下的 workspaceStorage 目录。
 fn scan_vscode_like(
   base: &Path,
   tool_id: &str,
@@ -68,25 +77,85 @@ fn scan_vscode_like(
 ) -> Vec<DetectedProject> {
   let global = base.join("User/globalStorage");
 
-  // 首选：state.vscdb（新版主存储）
+  // 按上述优先级拼接，后面按路径去重（保留最先生成的来源顺序）
   let mut uris = read_uris_from_vscdb(&global.join("state.vscdb"));
-  // 兜底：storage.json（旧版本仍把最近记录写在这里）
-  if uris.is_empty() {
-    uris = read_uris_from_storage_json(&global.join("storage.json"));
-  }
+  uris.extend(read_uris_from_storage_json(&global.join("storage.json")));
+  uris.extend(read_uris_from_workspace_storage(base));
 
   let mut out = Vec::new();
+  let mut seen: HashSet<String> = HashSet::new();
   for uri in uris {
     if out.len() >= MAX_PER_SOURCE {
       break;
     }
     // vscode-remote:// 等远程 URI 在这里返回 None，被自然过滤
-    let Some(path) = file_uri_to_path(&uri) else {
+    let Some(mut path) = file_uri_to_path(&uri) else {
       continue;
     };
+    // .code-workspace 多根工作区：记录的是文件而非目录，
+    // 取它所在目录当作项目目录（通常就是仓库根）更符合「导入项目」的直觉
+    if path.ends_with(".code-workspace") {
+      match Path::new(&path).parent() {
+        Some(parent) if parent.is_dir() => path = parent.to_string_lossy().into_owned(),
+        _ => continue,
+      }
+    }
+    if !seen.insert(path.clone()) {
+      continue;
+    }
     push_if_valid(&mut out, path, tool_id, existing);
   }
   out
+}
+
+/// 从 `User/workspaceStorage` 还原最近打开的目录。
+///
+/// 每个打开过的窗口都会在 `workspaceStorage/<hash>/` 留下 workspace.json：
+/// - 单目录窗口：`{"folder": "file:///path"}`
+/// - `.code-workspace` 多根窗口：`{"workspace": "file:///path/x.code-workspace"}`
+///
+/// 排序依据：workspace.json 的 mtime（每次打开窗口都会刷新），
+/// 用它近似「最近打开」的先后，保证最常用的项目排在前面。
+fn read_uris_from_workspace_storage(base: &Path) -> Vec<String> {
+  let dir = base.join("User/workspaceStorage");
+  let Ok(entries) = std::fs::read_dir(&dir) else {
+    return Vec::new();
+  };
+
+  // (mtime 毫秒, uri)；mtime 拿不到时按 0 处理，排在最后
+  let mut items: Vec<(u64, String)> = Vec::new();
+  for entry in entries.flatten() {
+    let dir_path = entry.path();
+    if !dir_path.is_dir() {
+      continue;
+    }
+    let meta_path = dir_path.join("workspace.json");
+    let Ok(raw) = std::fs::read_to_string(&meta_path) else {
+      continue;
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
+      continue;
+    };
+    // folder 优先（普通项目），没有再取 workspace（多根工作区文件）
+    let Some(uri) = json
+      .get("folder")
+      .and_then(|v| v.as_str())
+      .or_else(|| json.get("workspace").and_then(|v| v.as_str()))
+    else {
+      continue;
+    };
+    let mtime = std::fs::metadata(&meta_path)
+      .ok()
+      .and_then(|m| m.modified().ok())
+      .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+      .map(|d| d.as_millis() as u64)
+      .unwrap_or(0);
+    items.push((mtime, uri.to_string()));
+  }
+
+  // 最近的在前
+  items.sort_by(|a, b| b.0.cmp(&a.0));
+  items.into_iter().map(|(_, uri)| uri).collect()
 }
 
 /// 从 state.vscdb（SQLite）读 `history.recentlyOpenedPathsList` 的 folderUri 列表。
@@ -424,6 +493,60 @@ mod tests {
       paths,
       vec!["/Users/alice/Github/Stirling-PDF", "/Users/alice/Works/jeepay"]
     );
+  }
+
+  /// workspaceStorage 兜底：新版 VS Code 不再写 recentlyOpenedPathsList 时的唯一来源。
+  /// 覆盖「单目录 folder」「.code-workspace 文件取父目录」「mtime 倒序」三种行为。
+  #[test]
+  fn reads_workspace_storage_entries() {
+    let tmp = std::env::temp_dir().join(format!("zoro-ws-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let ws = tmp.join("User/workspaceStorage");
+
+    // 两个真实目录 + 一个 .code-workspace 文件
+    let older = tmp.join("code/older");
+    let newer = tmp.join("code/newer");
+    let ws_file_dir = tmp.join("code/multi-root");
+    for d in [&older, &newer, &ws_file_dir] {
+      std::fs::create_dir_all(d).unwrap();
+    }
+    let ws_file = ws_file_dir.join("multi.code-workspace");
+    std::fs::write(&ws_file, "{}").unwrap();
+
+    // 三条记录，用 File::set_modified 显式拉开 mtime，避免依赖写盘时序
+    let entries = [
+      ("aaa", format!(r#"{{"folder":"file://{}"}}"#, older.display()), 1_000u64),
+      ("bbb", format!(r#"{{"folder":"file://{}"}}"#, newer.display()), 2_000u64),
+      (
+        "ccc",
+        format!(r#"{{"workspace":"file://{}"}}"#, ws_file.display()),
+        3_000u64,
+      ),
+    ];
+    for (hash, body, secs) in entries {
+      let d = ws.join(hash);
+      std::fs::create_dir_all(&d).unwrap();
+      let p = d.join("workspace.json");
+      std::fs::write(&p, body).unwrap();
+      let handle = std::fs::OpenOptions::new().write(true).open(&p).unwrap();
+      let mtime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+      handle.set_modified(mtime).unwrap();
+    }
+
+    let uris = read_uris_from_workspace_storage(&tmp);
+    assert_eq!(uris.len(), 3, "三条都应读出：{uris:?}");
+    // 最后写入的排最前（mtime 倒序）
+    assert!(uris[0].ends_with("multi.code-workspace"), "{uris:?}");
+
+    // 端到端：.code-workspace 应转成其父目录，且被 push_if_valid 接受
+    let found = scan_vscode_like(&tmp, "vscode", &[]);
+    let paths: Vec<_> = found.iter().map(|p| p.path.clone()).collect();
+    assert!(
+      paths.contains(&ws_file_dir.to_string_lossy().into_owned()),
+      ".code-workspace 应取父目录：{paths:?}"
+    );
+
+    std::fs::remove_dir_all(&tmp).unwrap();
   }
 
   /// 端到端：伪造一个迷你 HOME 目录，覆盖三种来源

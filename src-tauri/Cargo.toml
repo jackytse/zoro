@@ -31,3 +31,31 @@ tauri-plugin-autostart = "2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 # 原生目录选择对话框（添加项目时浏览目录）
 tauri-plugin-dialog = "2"
+
+# macOS：直接访问 NSStatusItem / NSScreen，取托盘图标的权威位置，
+# 解决多显示器混合缩放下按几何推算定位弹窗失效的问题
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSStatusBar",
+  "NSStatusBarButton",
+  "NSStatusItem",
+  "NSButton",
+  "NSControl",
+  "NSCell",
+  "NSResponder",
+  "NSView",
+  "NSWindow",
+  "NSScreen",
+] }
+# 与 tao 一致：主屏 CG 高度用于「下左原点 → 上左原点」的 Y 轴翻转
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CGDirectDisplay",
+] }
+# MainThreadMarker：确保闭包在主线程执行
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSThread",
+] }

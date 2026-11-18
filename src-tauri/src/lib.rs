@@ -20,6 +20,34 @@ use tauri_plugin_autostart::ManagerExt as _;
 pub fn run() {
   tauri::Builder::default()
     .setup(|app| {
+      // 诊断模式：--debug-monitors 打印显示器原始数据后退出，
+      // 用于排查多显示器下托盘弹窗定位问题
+      if std::env::args().any(|a| a == "--debug-monitors") {
+        let monitors = app
+          .available_monitors()
+          .unwrap_or_default();
+        println!("显示器数量: {}", monitors.len());
+        for m in &monitors {
+          println!(
+            "  name={:?} scale={} position={:?} size={:?}",
+            m.name(),
+            m.scale_factor(),
+            m.position(),
+            m.size()
+          );
+        }
+        let primary = app.primary_monitor().ok().flatten();
+        if let Some(m) = primary {
+          println!(
+            "主屏: scale={} position={:?} size={:?}",
+            m.scale_factor(),
+            m.position(),
+            m.size()
+          );
+        }
+        app.handle().exit(0);
+      }
+
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()

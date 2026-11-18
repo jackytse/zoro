@@ -21,6 +21,8 @@ use tauri::PhysicalPosition;
 pub const POPUP_LABEL: &str = "tray";
 /// 主窗口 label，与 tauri.conf.json 中 windows[0] 一致
 pub const MAIN_LABEL: &str = "main";
+/// 托盘图标 id（tray_by_id 检索用）
+pub const TRAY_ID: &str = "main-tray";
 /// 失焦隐藏后多少毫秒内的托盘点击视为「关闭」意图
 const RECLICK_GRACE: Duration = Duration::from_millis(300);
 /// 显示后多少毫秒内的失焦视为假失焦
@@ -38,7 +40,7 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
     ],
   )?;
 
-  TrayIconBuilder::with_id("main-tray")
+  TrayIconBuilder::with_id(TRAY_ID)
     .icon(tauri::image::Image::from_bytes(include_bytes!(
       "../icons/tray.png"
     ))?)
@@ -53,6 +55,8 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
       "quit" => app.exit(0),
       _ => {}
     })
+    // 左键抬起时切换弹窗；`tray` 引用会传给定位逻辑，
+    // macOS 上用它访问内部 NSStatusItem 取权威位置
     .on_tray_icon_event(|tray, event| {
       // 只响应左键抬起，避免按下/抬起各触发一次
       if let TrayIconEvent::Click {
@@ -62,7 +66,7 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
         ..
       } = event
       {
-        toggle_popup(tray.app_handle(), rect);
+        toggle_popup(tray.app_handle(), tray, rect);
       }
     })
     .build(app)?;
@@ -88,7 +92,10 @@ pub fn create_popup_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// 托盘左键点击：显示→隐藏，隐藏→定位并显示。
-pub fn toggle_popup(app: &AppHandle, rect: Rect) {
+///
+/// `tray` 是触发本次事件的托盘图标引用：macOS 上通过它访问内部
+/// NSStatusItem 拿权威位置（多显示器混合缩放下几何推算不可靠）。
+pub fn toggle_popup(app: &AppHandle, tray: &tauri::tray::TrayIcon, rect: Rect) {
   let Some(window) = app.get_webview_window(POPUP_LABEL) else {
     log::error!("弹窗窗口不存在，可能被销毁");
     return;
@@ -108,7 +115,7 @@ pub fn toggle_popup(app: &AppHandle, rect: Rect) {
     }
   }
 
-  if let Err(err) = position_near_tray(app, &window, rect) {
+  if let Err(err) = position_near_tray(app, tray, &window, rect) {
     log::warn!("弹窗定位失败，使用上次位置：{err}");
   }
   if let Err(err) = window.show() {
@@ -135,139 +142,83 @@ pub fn on_popup_blur(app: &AppHandle) {
   }
 }
 
+/// 托盘图标与目标屏边界的统一几何描述。
+///
+/// 坐标系约定：
+/// - macOS：全局「点」空间（CG 点空间），上左为原点——与
+///   `set_position(LogicalPosition)` 的输入空间一致；
+/// - 其他平台：统一的全局物理像素空间，上左为原点。
+struct TrayPlacement {
+  /// 图标水平中心
+  icon_center_x: f64,
+  /// 图标上边缘
+  icon_top: f64,
+  /// 图标下边缘
+  icon_bottom: f64,
+  /// 可用于放置弹窗的屏幕边界（macOS 用 visibleFrame，已排除菜单栏/Dock）
+  screen_left: f64,
+  screen_top: f64,
+  screen_right: f64,
+  screen_bottom: f64,
+}
+
 /// 把弹窗贴着托盘图标放置，并夹紧在图标所在显示器的可视范围内。
 ///
 /// - macOS：托盘在顶部菜单栏 → 弹窗放图标下方；
 /// - Windows：托盘在右下角 → 放上方；
-/// - 多显示器：以图标所在显示器为准，避免弹窗跑到另一块屏上。
+/// - 多显示器：以托盘图标真实所在的显示器为准，避免弹窗跑到另一块屏上。
 ///
-/// 多显示器坑（macOS 特有）：`TrayIconEvent` 的 rect 是**物理坐标**
-/// （已乘托盘所在屏的 backingScaleFactor），而 tao 的 `monitor_from_point`
-/// 按 `CGDisplayBounds`（全局**点**空间）匹配。托盘所在屏缩放 > 1 时，
-/// 物理坐标在点空间里必然越界 → 匹配失败 → 回退主屏，表现为「点击 B 屏
-/// 托盘，弹窗却在 A 屏出现」。因此 macOS 上必须先还原出点空间再匹配与定位。
+/// 多显示器坑（macOS 特有）：`TrayIconEvent` 的 rect 是**物理坐标**（已乘
+/// 托盘所在屏的 backingScaleFactor），而多屏混合缩放时（如 1512×982@2x 与
+/// 1920×1080@1x 拼接）两块屏的物理区间在全局坐标里会**重叠**——
+/// 「按几何区间匹配显示器」没有唯一解，这就是「点 B 屏托盘、弹窗出现在
+/// A 屏」的根因。
+///
+/// 解法：绕开事件 rect，直接问系统要权威数据——tray-icon 内部持有
+/// `NSStatusItem`，其按钮所属 `NSWindow` 自带 `NSScreen` 归属，且窗口
+/// frame 就在统一的「点空间」里，无缩放歧义。几何推算只作为拿不到
+/// NSStatusItem 时的兜底。
 fn position_near_tray(
   app: &AppHandle,
+  tray: &tauri::tray::TrayIcon,
   window: &tauri::WebviewWindow,
   rect: Rect,
 ) -> tauri::Result<()> {
-  // TrayIconEvent 的 rect.position / rect.size 都是 Physical（文档明确标注），
-  // to_physical 对 Physical 变体是无损透传，传 1.0 只是为了满足签名
-  let icon_pos = rect.position.to_physical::<f64>(1.0);
-  let icon_size = rect.size.to_physical::<f64>(1.0);
-  let window_size = window.outer_size().unwrap_or_else(|_| (372, 460).into());
-
   // 窗口逻辑尺寸（CSS px）：跨屏移动时不变，用它参与坐标运算才能保证
   // 在不同缩放的屏上都得到正确的视觉大小
+  let window_size = window.outer_size().unwrap_or_else(|_| (372, 460).into());
   let win_scale = window.scale_factor().unwrap_or(1.0);
   let win_w = window_size.width as f64 / win_scale;
   let win_h = window_size.height as f64 / win_scale;
 
-  // 图标中心（物理）与图标上/下边缘（物理）
-  let icon_center_x = icon_pos.x + icon_size.width / 2.0;
-  let icon_top = icon_pos.y;
-  let icon_bottom = icon_pos.y + icon_size.height;
-
-  // ---------- 1. 找出托盘图标所在的显示器 ----------
-  //
-  // macOS：tao 的 Monitor::position()/size() 实为「CG 点 × 本屏缩放」，
-  // 混合缩放的多屏没有统一的物理全局空间；但「点空间」是统一的。
-  // 所以对每块屏用**它自己的 scale** 把图标物理坐标还原成点坐标，
-  // 能落进该屏点边界的那块就是托盘所在屏（各屏点边界互不重叠，唯一命中）。
-  //
-  // 其他平台（Windows 等）：物理全局坐标空间是统一的，
-  // 直接用 monitor_from_point 按物理坐标匹配即可。
+  // ---------- 1. 取托盘几何 ----------
+  // 优先 NSStatusItem 权威数据（macOS）；失败则退回各平台的几何推算
   #[cfg(target_os = "macos")]
-  let matched = {
-    let monitors = app.available_monitors().unwrap_or_default();
-    monitors.iter().find_map(|m| {
-      let s = m.scale_factor();
-      let p = m.position();
-      let sz = m.size();
-      // 还原这块屏的 CG 点边界
-      let (pl, pt) = (p.x as f64 / s, p.y as f64 / s);
-      let (pr, pb) = (
-        pl + sz.width as f64 / s,
-        pt + sz.height as f64 / s,
-      );
-      // 图标物理坐标 ÷ 本屏 scale = 点坐标；落在边界内即命中
-      let cx_pts = icon_center_x / s;
-      let top_pts = icon_top / s;
-      (cx_pts >= pl && cx_pts < pr && top_pts >= pt && top_pts < pb)
-        .then(|| (s, pl, pt, pr, pb))
-    })
-  };
-
-  #[cfg(not(target_os = "macos"))]
-  let matched = {
-    // 图标中心点落在哪块屏（物理空间）
-    app
-      .monitor_from_point(icon_center_x, icon_top)
-      .ok()
-      .flatten()
-      .map(|m| {
-        let p = m.position();
-        let s = m.size();
-        (
-          m.scale_factor(),
-          p.x as f64,
-          p.y as f64,
-          (p.x + s.width as i32) as f64,
-          (p.y + s.height as i32) as f64,
-        )
-      })
-  };
-
-  // 没匹配上时退回主屏（按主屏 scale 还原坐标），至少保证弹窗不跑到屏幕外
-  let (tray_scale, m_left, m_top, m_right, m_bottom) = matched.unwrap_or_else(|| {
-    log::warn!("未能定位托盘所在显示器，退回主屏");
-    app
-      .primary_monitor()
-      .ok()
-      .flatten()
-      .map(|m| {
-        let s = m.scale_factor();
-        let p = m.position();
-        let sz = m.size();
-        #[cfg(target_os = "macos")]
-        let bounds = (
-          p.x as f64 / s,
-          p.y as f64 / s,
-          (p.x as f64 + sz.width as f64) / s,
-          (p.y as f64 + sz.height as f64) / s,
-        );
-        #[cfg(not(target_os = "macos"))]
-        let bounds = (
-          p.x as f64,
-          p.y as f64,
-          (p.x + sz.width as i32) as f64,
-          (p.y + sz.height as i32) as f64,
-        );
-        (s, bounds.0, bounds.1, bounds.2, bounds.3)
-      })
-      // 连主屏都拿不到时用一个大到不会夹紧的假想边界
-      .unwrap_or((1.0, 0.0, 0.0, f64::MAX, f64::MAX))
+  let placement = status_item_geometry(tray).unwrap_or_else(|| {
+    log::warn!("未能从 NSStatusItem 获取托盘位置，退回几何推算");
+    fallback_geometry_macos(app, rect)
   });
 
-  // ---------- 2. 在目标空间内计算贴图标的位置 ----------
-  // 图标几何换算到目标空间（macOS = 点，其余 = 物理像素）
-  let icon_left = icon_pos.x / tray_scale;
-  let icon_center = icon_left + (icon_size.width / tray_scale) / 2.0;
-  let icon_top_s = icon_top / tray_scale;
-  let icon_bottom_s = icon_bottom / tray_scale;
+  #[cfg(not(target_os = "macos"))]
+  let placement = fallback_geometry_other(app, rect);
 
   let gap = GAP as f64;
 
+  // ---------- 2. 计算贴图标的位置 ----------
   // 优先放图标下方；下方放不下（屏幕边缘）则放到图标上方
-  let below_y = icon_bottom_s + gap;
-  let above_y = icon_top_s - gap - win_h;
-  let mut y = if below_y + win_h <= m_bottom { below_y } else { above_y };
+  let below_y = placement.icon_bottom + gap;
+  let above_y = placement.icon_top - gap - win_h;
+  let mut y = if below_y + win_h <= placement.screen_bottom {
+    below_y
+  } else {
+    above_y
+  };
 
   // 水平方向以图标中心对齐，再夹进屏幕左右边缘
   // 用 max→min 而不是 clamp：极小屏上 clamp 的 min>max 会 panic
-  let mut x = icon_center - win_w / 2.0;
-  x = x.max(m_left + gap).min(m_right - gap - win_w);
-  y = y.max(m_top + gap).min(m_bottom - gap - win_h);
+  let mut x = placement.icon_center_x - win_w / 2.0;
+  x = x.max(placement.screen_left + gap).min(placement.screen_right - gap - win_w);
+  y = y.max(placement.screen_top + gap).min(placement.screen_bottom - gap - win_h);
 
   // ---------- 3. 落位 ----------
   // macOS：传 LogicalPosition（点坐标）——tao 对 Logical 变体原样透传给
@@ -279,6 +230,156 @@ fn position_near_tray(
   #[cfg(not(target_os = "macos"))]
   let target_pos = PhysicalPosition::new(x as i32, y as i32);
   window.set_position(target_pos)
+}
+
+/// macOS：从 NSStatusItem 提取托盘图标的权威几何（点空间）。
+///
+/// 死锁说明：本函数在托盘点击回调（主线程、事件循环派发中）内调用
+/// `with_inner_tray_icon`。tauri-runtime-wry 的 `send_user_message`
+/// 检测到「当前已在主线程」时会**同步执行**闭包而非经事件循环转发，
+/// 因此阻塞等待的 recv 立即返回，不会死锁。（来自其他线程调用时走
+/// proxy 转发，事件循环空闲，同样安全。）
+///
+/// 闭包内完成全部计算、只返回纯数字（f64 是 Send）——objc2 的
+/// Retained<NSStatusItem> 等非 Send 类型不允许跨闭包边界带出。
+#[cfg(target_os = "macos")]
+fn status_item_geometry(tray: &tauri::tray::TrayIcon) -> Option<TrayPlacement> {
+  use objc2::rc::Retained;
+  use objc2_app_kit::{NSStatusItem, NSWindow};
+  use objc2_foundation::MainThreadMarker;
+  // 与 tao 的翻转逻辑保持一致：主屏 CG 高度 = 点空间总高度
+  use objc2_core_graphics::{CGDisplayPixelsHigh, CGMainDisplayID};
+
+  tray
+    .with_inner_tray_icon(|inner| -> Option<TrayPlacement> {
+      // 闭包必在主线程执行（见上方死锁说明），MainThreadMarker 一定可用
+      let mtm = MainThreadMarker::new()?;
+      // 1. tray-icon 内部持有的 NSStatusItem（托盘图标本体）
+      let item: Retained<NSStatusItem> = inner.ns_status_item()?;
+      // 2. 状态栏按钮 → 按钮所在的 NSWindow；
+      //    NSStatusBarButton → NSButton → NSControl → NSView 逐级上溯
+      //    才能调到 NSView::window()（objc2 继承方法只声明在父类上）
+      let button = item.button(mtm)?;
+      let view = button
+        .into_super() // NSButton
+        .into_super() // NSControl
+        .into_super(); // NSView
+      let win: Retained<NSWindow> = view.window()?;
+      // 3. 窗口所在屏幕（权威归属，混合缩放下也不歧义）
+      let screen = win.screen()?;
+
+      // 4. 换算到点空间（上左原点）：
+      //    Cocoa 全局坐标是「下左原点」，翻转常数 = 主屏 CG 高度（点）
+      let main_h = CGDisplayPixelsHigh(CGMainDisplayID()) as f64;
+      let frame = win.frame(); // 图标全局矩形（下左原点，点）
+      let vf = screen.visibleFrame(); // 可视区（排除菜单栏/Dock）
+
+      Some(TrayPlacement {
+        icon_center_x: frame.origin.x + frame.size.width / 2.0,
+        icon_top: main_h - (frame.origin.y + frame.size.height),
+        icon_bottom: main_h - frame.origin.y,
+        screen_left: vf.origin.x,
+        screen_right: vf.origin.x + vf.size.width,
+        screen_top: main_h - (vf.origin.y + vf.size.height),
+        screen_bottom: main_h - vf.origin.y,
+      })
+    })
+    .ok()
+    .flatten()
+}
+
+/// macOS 兜底：拿不到 NSStatusItem 时按事件 rect 做几何推算（点空间）。
+///
+/// 单屏或纯 Retina 场景下此路径依旧正确；混合缩放多屏可能匹配歧义，
+/// 但 NSStatusItem 路径正常时不会走到这里。
+#[cfg(target_os = "macos")]
+fn fallback_geometry_macos(app: &AppHandle, rect: Rect) -> TrayPlacement {
+  // 事件 rect 是物理坐标，对 Physical 变体 to_physical 无损透传
+  let icon_pos = rect.position.to_physical::<f64>(1.0);
+  let icon_size = rect.size.to_physical::<f64>(1.0);
+  let icon_center_x = icon_pos.x + icon_size.width / 2.0;
+
+  // 对每块屏用它自己的 scale 还原 CG 点边界，与图标坐标（÷各屏 scale）
+  // 匹配；单屏时主屏命中，多屏取第一个命中的屏。
+  // 注意：存入 TrayPlacement 的所有值都要除以该屏 scale（物理 → 点）
+  let monitors = app.available_monitors().unwrap_or_default();
+  let matched = monitors.iter().find_map(|m| {
+    let s = m.scale_factor();
+    let p = m.position();
+    let sz = m.size();
+    let (left, top) = (p.x as f64 / s, p.y as f64 / s);
+    let (right, bottom) = (left + sz.width as f64 / s, top + sz.height as f64 / s);
+    let cx = icon_center_x / s;
+    let top_edge = icon_pos.y / s;
+    (cx >= left && cx < right && top_edge >= top && top_edge < bottom).then(|| TrayPlacement {
+      icon_center_x: cx,
+      icon_top: top_edge,
+      icon_bottom: top_edge + icon_size.height as f64 / s,
+      screen_left: left,
+      screen_top: top,
+      screen_right: right,
+      screen_bottom: bottom,
+    })
+  });
+
+  // 主屏 scale 兜底换算（拿不到主屏时按 1x，至少不越界太离谱）
+  let fb_scale = app
+    .primary_monitor()
+    .ok()
+    .flatten()
+    .map(|m| m.scale_factor())
+    .unwrap_or(1.0);
+  matched.unwrap_or_else(|| TrayPlacement {
+    icon_center_x: icon_center_x / fb_scale,
+    icon_top: icon_pos.y / fb_scale,
+    icon_bottom: icon_pos.y / fb_scale + icon_size.height as f64 / fb_scale,
+    screen_left: 0.0,
+    screen_top: 0.0,
+    screen_right: f64::MAX,
+    screen_bottom: f64::MAX,
+  })
+}
+
+/// 非 macOS 兜底：物理空间统一，直接按图标中心匹配所在显示器。
+#[cfg(not(target_os = "macos"))]
+fn fallback_geometry_other(app: &AppHandle, rect: Rect) -> TrayPlacement {
+  let icon_pos = rect.position.to_physical::<f64>(1.0);
+  let icon_size = rect.size.to_physical::<f64>(1.0);
+  let icon_center_x = icon_pos.x + icon_size.width / 2.0;
+  let icon_top = icon_pos.y;
+  let icon_bottom = icon_pos.y + icon_size.height;
+
+  // 图标中心点落在哪块屏（物理空间），失败退回主屏
+  let matched = app
+    .monitor_from_point(icon_center_x, icon_top)
+    .ok()
+    .flatten()
+    .or_else(|| app.primary_monitor().ok().flatten());
+
+  matched
+    .map(|m| {
+      let p = m.position();
+      let sz = m.size();
+      TrayPlacement {
+        icon_center_x,
+        icon_top,
+        icon_bottom,
+        screen_left: p.x as f64,
+        screen_top: p.y as f64,
+        screen_right: (p.x + sz.width as i32) as f64,
+        screen_bottom: (p.y + sz.height as i32) as f64,
+      }
+    })
+    .unwrap_or_else(|| TrayPlacement {
+      // 连主屏都拿不到：不夹紧，至少弹窗能显示出来
+      icon_center_x,
+      icon_top,
+      icon_bottom,
+      screen_left: 0.0,
+      screen_top: 0.0,
+      screen_right: f64::MAX,
+      screen_bottom: f64::MAX,
+    })
 }
 
 /// 显示并聚焦主窗口（托盘菜单 / 弹窗「设置」入口共用）。

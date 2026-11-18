@@ -5,3 +5,13 @@
 /* Tailwind 4 的 dark 变体默认跟随 prefers-color-scheme，
    而 Nuxt UI 依赖 html.dark 类来切换，这里显式覆盖成 class 策略 */
 @custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * 两个窗口的滚动都收敛到组件内部（OverlayScrollbar / 弹窗列表），
+ * body 不再承担页面级滚动——锁死 overflow，避免「组件滑块 +
+ * 原生 body 滚动条」双重滚动条的问题。
+ */
+html,
+body {
+  overflow: hidden;
+}

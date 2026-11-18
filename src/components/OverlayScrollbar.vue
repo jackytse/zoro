@@ -112,16 +112,26 @@ onBeforeUnmount(() => {
   </div>
 </template>
 
-<style scoped>
-/* 隐藏原生滚动条：Firefox 走 scrollbar-width，WebKit 走伪元素。
-   隐藏后滚动条不占据任何布局宽度，内容宽度与未滚动时完全一致 */
+<style>
+/*
+ * 隐藏原生滚动条——必须用非 scoped 全局样式。
+ * 实测 WKWebView（Tauri macOS）里 scoped 属性选择器对
+ * ::-webkit-scrollbar 伪元素不生效，且仅 display:none 也不够，
+ * 需要 width/height 同时归零才能真正隐藏并释放占位。
+ * Firefox 走 scrollbar-width: none。
+ */
 .osb-viewport {
   scrollbar-width: none;
 }
 .osb-viewport::-webkit-scrollbar {
   display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
 }
+</style>
 
+<style scoped>
 /* 淡入淡出：200ms 出 / 400ms 收，与 macOS 原生滚动条的节奏接近 */
 .osb-fade-enter-active {
   transition: opacity 200ms ease-out;

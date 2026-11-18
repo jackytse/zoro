@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 import { useToast } from "@nuxt/ui/composables";
+import { open } from "@tauri-apps/plugin-dialog";
 import { desktop, type DesktopConfig, type DetectedProject } from "../api/desktop";
 
 const toast = useToast();
@@ -22,6 +23,22 @@ const formError = computed(() => {
   if (!form.value.toolId) return "请选择开发工具";
   return null;
 });
+
+/** 打开原生目录选择器；选中后回填路径，名称留空则保存时自动取目录名 */
+async function browseFolder() {
+  try {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "选择项目目录",
+    });
+    if (typeof selected === "string" && selected) {
+      form.value.path = selected;
+    }
+  } catch (error) {
+    toast.add({ title: "打开目录选择器失败", description: String(error), color: "error" });
+  }
+}
 
 const toolOptions = computed(() =>
   (config.value?.tools ?? []).map((tool) => ({
@@ -330,7 +347,16 @@ export default { name: "SettingsView" };
           </UFormField>
         </div>
         <UFormField label="项目路径" hint="支持 ~ 前缀，如 ~/Projects/zoro">
-          <UInput v-model="form.path" placeholder="/Users/you/Projects/demo" class="w-full" />
+          <div class="flex w-full gap-2">
+            <UInput v-model="form.path" placeholder="/Users/you/Projects/demo" class="flex-1" />
+            <UButton
+              icon="i-lucide-folder-open"
+              color="neutral"
+              variant="soft"
+              aria-label="浏览目录"
+              @click="browseFolder"
+            />
+          </div>
         </UFormField>
         <div class="flex justify-end">
           <UButton type="submit" icon="i-lucide-plus" :loading="isSubmitting"> 添加到托盘 </UButton>

@@ -27,3 +27,7 @@ tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
 # 开机自启：登录系统后自动运行（托盘应用常驻）
 tauri-plugin-autostart = "2"
+# 读取 VS Code 的 state.vscdb（SQLite）；bundled 自带 SQLite，免系统依赖
+rusqlite = { version = "0.37", features = ["bundled"] }
+# 原生目录选择对话框（添加项目时浏览目录）
+tauri-plugin-dialog = "2"

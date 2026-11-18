@@ -2,9 +2,13 @@
 //!
 //! 支持的数据源（macOS）：
 //! - VS Code / Cursor（同构存储）：
-//!   `<app>/User/globalStorage/storage.json` 的 `history.recentlyOpenedPathsList.entries[].folderUri`
+//!   - 新版（1.64+）：`<app>/User/globalStorage/state.vscdb`（SQLite），
+//!     `ItemTable` 表的 `history.recentlyOpenedPathsList` 键
+//!   - 旧版兜底：`<app>/User/globalStorage/storage.json` 的同名 JSON 结构
 //! - JetBrains 系列产品（IDEA / PyCharm / GoLand 等）：
-//!   `~/Library/Application Support/JetBrains/<产品版本>/options/recentProjects.xml` 的 `recentPaths` 列表
+//!   `~/Library/Application Support/JetBrains/<产品版本>/options/recentProjects.xml`
+//!   - 新版：`additionalInfo` map 的 `<entry key="路径">`
+//!   - 旧版：`recentPaths` 列表的 `<option value="路径">`
 //!
 //! 设计约定：
 //! - 扫描是**只读**的，不会写入任何工具的数据文件；
@@ -27,8 +31,8 @@ pub struct DetectedProject {
   pub tool_id: String,
 }
 
-/// 每个来源最多返回的条数：工具历史可能有几十上百条，截断保持弹窗可用。
-const MAX_PER_SOURCE: usize = 30;
+/// 每个来源最多返回的条数：覆盖 IDE 的完整最近记录。
+const MAX_PER_SOURCE: usize = 100;
 
 /// 扫描入口。`home` 传用户主目录（独立成参数方便单元测试注入临时目录），
 /// `existing` 是已配置的（路径, 工具id）列表，用于过滤重复项。
@@ -55,22 +59,99 @@ pub fn scan(home: &Path, existing: &[(String, String)]) -> Vec<DetectedProject> 
   found
 }
 
-/// 扫描 VS Code / Cursor 的 storage.json。
+/// 扫描 VS Code / Cursor。
+/// 新版最近记录在 state.vscdb（SQLite），storage.json 仅作旧版兜底。
 fn scan_vscode_like(
   base: &Path,
   tool_id: &str,
   existing: &[(String, String)],
 ) -> Vec<DetectedProject> {
-  let storage = base.join("User/globalStorage/storage.json");
-  // 文件不存在 / 不可读 / JSON 损坏都静默返回空：某个工具没装是常态，不该报错
-  let Ok(raw) = std::fs::read_to_string(&storage) else {
+  let global = base.join("User/globalStorage");
+
+  // 首选：state.vscdb（新版主存储）
+  let mut uris = read_uris_from_vscdb(&global.join("state.vscdb"));
+  // 兜底：storage.json（旧版本仍把最近记录写在这里）
+  if uris.is_empty() {
+    uris = read_uris_from_storage_json(&global.join("storage.json"));
+  }
+
+  let mut out = Vec::new();
+  for uri in uris {
+    if out.len() >= MAX_PER_SOURCE {
+      break;
+    }
+    // vscode-remote:// 等远程 URI 在这里返回 None，被自然过滤
+    let Some(path) = file_uri_to_path(&uri) else {
+      continue;
+    };
+    push_if_valid(&mut out, path, tool_id, existing);
+  }
+  out
+}
+
+/// 从 state.vscdb（SQLite）读 `history.recentlyOpenedPathsList` 的 folderUri 列表。
+///
+/// VS Code 运行时持有该库的写锁，因此先把主库文件与 -wal / -shm 一并
+/// 复制到临时目录再打开副本：不影响正在运行的 VS Code，也避免读取被拒。
+fn read_uris_from_vscdb(db_path: &Path) -> Vec<String> {
+  if !db_path.exists() {
+    return Vec::new();
+  }
+  let tmp_base = std::env::temp_dir().join(format!("zoro-vscdb-{}.sqlite", std::process::id()));
+  // 主库 + WAL/SHM 一起复制：最新写入可能尚未 checkpoint 进主库
+  let base_str = db_path.to_string_lossy().into_owned();
+  let tmp_str = tmp_base.to_string_lossy().into_owned();
+  for suffix in ["", "-wal", "-shm"] {
+    // 先绑定 String 再借用：Path::new 不能直接借用临时 format! 值
+    let src_str = format!("{base_str}{suffix}");
+    let dst_str = format!("{tmp_str}{suffix}");
+    let src = Path::new(&src_str);
+    if src.exists() {
+      let dst = Path::new(&dst_str);
+      if std::fs::copy(src, dst).is_err() {
+        return Vec::new();
+      }
+    }
+  }
+
+  let uris = (|| -> Option<Vec<String>> {
+    let conn = rusqlite::Connection::open(&tmp_base).ok()?;
+    let value: String = conn
+      .query_row(
+        "SELECT value FROM ItemTable WHERE key = 'history.recentlyOpenedPathsList'",
+        [],
+        |row| row.get(0),
+      )
+      .ok()?;
+    let json: serde_json::Value = serde_json::from_str(&value).ok()?;
+    let entries = json.get("entries")?.as_array()?;
+    Some(
+      entries
+        .iter()
+        .filter_map(|e| e.get("folderUri").and_then(|v| v.as_str()).map(String::from))
+        .collect(),
+    )
+  })()
+  .unwrap_or_default();
+
+  // 清理临时副本（-wal/-shm 一并删）
+  for suffix in ["", "-wal", "-shm"] {
+    let path_str = format!("{tmp_str}{suffix}");
+    let _ = std::fs::remove_file(Path::new(&path_str));
+  }
+  uris
+}
+
+/// 从旧版 storage.json 读最近记录（结构与 vscdb 里存的 JSON 相同）。
+fn read_uris_from_storage_json(path: &Path) -> Vec<String> {
+  // 文件不存在 / 不可读 / JSON 损坏都静默返回空：旧文件只是兜底来源
+  let Ok(raw) = std::fs::read_to_string(path) else {
     return Vec::new();
   };
   let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
     return Vec::new();
   };
 
-  // 收集 folderUri 列表（workspace 文件不带 folderUri，天然被跳过）
   let mut uris: Vec<String> = Vec::new();
   let entries = json
     .pointer("/history/recentlyOpenedPathsList/entries")
@@ -91,19 +172,7 @@ fn scan_vscode_like(
       uris.push(uri.to_string());
     }
   }
-
-  let mut out = Vec::new();
-  for uri in uris {
-    if out.len() >= MAX_PER_SOURCE {
-      break;
-    }
-    // vscode-remote:// 等远程 URI 在这里返回 None，被自然过滤
-    let Some(path) = file_uri_to_path(&uri) else {
-      continue;
-    };
-    push_if_valid(&mut out, path, tool_id, existing);
-  }
-  out
+  uris
 }
 
 /// 扫描 JetBrains 系列产品的 recentProjects.xml。
@@ -115,7 +184,8 @@ fn scan_jetbrains(base: &Path, existing: &[(String, String)]) -> Vec<DetectedPro
     return Vec::new();
   };
 
-  // 目录名形如 IntelliJIdea2023.2 / PyCharm2023.3，排序让输出顺序稳定
+  // 目录名形如 IntelliJIdea2026.3 / PyCharm2023.3，排序让输出顺序稳定；
+  // 多版本并存（如 2026.2 与 2026.3）时都扫，重复由上层去重
   let mut products: Vec<_> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
   products.sort();
 
@@ -199,34 +269,36 @@ fn percent_decode(input: &str) -> String {
   String::from_utf8_lossy(&out).into_owned()
 }
 
-/// 从 recentProjects.xml 的 recentPaths 列表提取路径，并把
-/// JetBrains 的 `$USER_HOME$` 宏展开成真实主目录。
+/// 从 recentProjects.xml 提取最近项目路径，并把 JetBrains 的
+/// `$USER_HOME$` 宏展开成真实主目录。兼容两种存储布局：
+/// - 新版：`additionalInfo` map 的 `<entry key="路径">`
+/// - 旧版：`recentPaths` 列表的 `<option value="路径">`
 ///
 /// 故意不引入 XML 解析库：目标结构非常固定，字符串定位即可，还便于测试。
 fn extract_recent_paths(xml: &str, home: &str) -> Vec<String> {
-  let Some(start) = xml.find("name=\"recentPaths\"") else {
-    return Vec::new();
-  };
-  let Some(list_start_rel) = xml[start..].find("<list>") else {
-    return Vec::new();
-  };
-  let list_abs = start + list_start_rel;
-  let Some(list_end_rel) = xml[list_abs..].find("</list>") else {
-    return Vec::new();
-  };
-  let list = &xml[list_abs..list_abs + list_end_rel];
+  let mut raws: Vec<String> = Vec::new();
+
+  // 新版布局：additionalInfo 的 entry key。只扫 key=，不能盲扫 value=——
+  // 同一文件里还有时间戳、$APPLICATION_HOME_DIR$/bin 等无关属性值
+  raws.extend(collect_attr_values(xml, "entry", "key"));
+
+  // 旧版布局：recentPaths 列表里的 option value（限定在列表块内）
+  if let Some(start) = xml.find("name=\"recentPaths\"") {
+    if let Some(list_start_rel) = xml[start..].find("<list>") {
+      let list_abs = start + list_start_rel;
+      if let Some(list_end_rel) = xml[list_abs..].find("</list>") {
+        raws.extend(collect_attr_values(
+          &xml[list_abs..list_abs + list_end_rel],
+          "option",
+          "value",
+        ));
+      }
+    }
+  }
 
   let mut out = Vec::new();
-  let mut cursor = 0;
-  while let Some(rel) = list[cursor..].find("value=\"") {
-    let v_abs = cursor + rel + "value=\"".len();
-    let Some(end_rel) = list[v_abs..].find('"') else {
-      break;
-    };
-    let raw = &list[v_abs..v_abs + end_rel];
-    cursor = v_abs + end_rel + 1;
-
-    let path = if let Some(p) = file_uri_to_path(raw) {
+  for raw in raws {
+    let path = if let Some(p) = file_uri_to_path(&raw) {
       // 少量版本会存成 file:// URI
       p
     } else {
@@ -236,6 +308,22 @@ fn extract_recent_paths(xml: &str, home: &str) -> Vec<String> {
     if path.starts_with('/') && !out.contains(&path) {
       out.push(xml_unescape(&path));
     }
+  }
+  out
+}
+
+/// 收集形如 `<tag attr="...">` 的属性值（字符串级扫描，容忍残缺 XML）。
+fn collect_attr_values(xml: &str, tag: &str, attr: &str) -> Vec<String> {
+  let needle = format!("<{tag} {attr}=\"");
+  let mut out = Vec::new();
+  let mut cursor = 0;
+  while let Some(rel) = xml[cursor..].find(&needle) {
+    let v_abs = cursor + rel + needle.len();
+    let Some(end) = xml[v_abs..].find('"') else {
+      break;
+    };
+    out.push(xml[v_abs..v_abs + end].to_string());
+    cursor = v_abs + end + 1;
   }
   out
 }
@@ -274,9 +362,9 @@ mod tests {
     assert_eq!(file_uri_to_path("/plain/path"), None);
   }
 
-  /// recentPaths 提取 + $USER_HOME$ 宏展开 + URI 形式条目
+  /// 旧版 recentPaths 列表提取 + $USER_HOME$ 宏展开 + URI 形式条目
   #[test]
-  fn extracts_jetbrains_recent_paths() {
+  fn extracts_jetbrains_legacy_recent_paths() {
     let xml = r#"
       <application>
         <component name="RecentProjectsManager">
@@ -304,44 +392,87 @@ mod tests {
     );
   }
 
-  /// 端到端：伪造一个迷你 HOME 目录，验证扫描结果
-  /// 含去重、已存在目录校验与已配置项过滤。
+  /// 新版 additionalInfo 布局：entry key 承载项目路径；
+  /// entry 内部的无关 value（时间戳、$APPLICATION_HOME_DIR$ 等）不能混进来
+  #[test]
+  fn extracts_jetbrains_additional_info_keys() {
+    let xml = r#"
+      <application>
+        <component name="RecentProjectsManager">
+          <option name="additionalInfo">
+            <map>
+              <entry key="$USER_HOME$/Github/Stirling-PDF">
+                <value>
+                  <RecentProjectMetaInfo frameTitle="Stirling-PDF">
+                    <option name="binFolder" value="$APPLICATION_HOME_DIR$/bin" />
+                    <option name="activationTimestamp" value="1719295435097" />
+                  </RecentProjectMetaInfo>
+                </value>
+              </entry>
+              <entry key="/Users/alice/Works/jeepay">
+                <value>
+                  <RecentProjectMetaInfo frameTitle="jeepay" />
+                </value>
+              </entry>
+            </map>
+          </option>
+        </component>
+      </application>
+    "#;
+    let paths = extract_recent_paths(xml, "/Users/alice");
+    assert_eq!(
+      paths,
+      vec!["/Users/alice/Github/Stirling-PDF", "/Users/alice/Works/jeepay"]
+    );
+  }
+
+  /// 端到端：伪造一个迷你 HOME 目录，覆盖三种来源
+  /// （state.vscdb / storage.json / recentProjects.xml）+ 去重 + 过滤。
   #[test]
   fn scans_fake_home_end_to_end() {
     let tmp = std::env::temp_dir().join(format!("zoro-importer-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let app_support = tmp.join("Library/Application Support");
 
-    // 两个真实存在的目录（其中 zoro 已配置过，应被过滤）
+    // 三个真实存在的目录（zoro 已配置过，应被过滤）
     let proj_zoro = tmp.join("code/zoro");
     let proj_new = tmp.join("code/brand-new");
+    let proj_idea = tmp.join("code/idea-only");
     std::fs::create_dir_all(&proj_zoro).unwrap();
     std::fs::create_dir_all(&proj_new).unwrap();
+    std::fs::create_dir_all(&proj_idea).unwrap();
 
-    // VS Code storage.json：一条已配置、一条新
+    // VS Code state.vscdb（新版主存储）：一条已配置、一条新
     let code_dir = app_support.join("Code/User/globalStorage");
     std::fs::create_dir_all(&code_dir).unwrap();
-    std::fs::write(
-      code_dir.join("storage.json"),
-      format!(
-        r#"{{"history":{{"recentlyOpenedPathsList":{{"entries":[
-          {{"folderUri":"file://{}"}},
-          {{"folderUri":"file://{}"}}
-        ]}}}}}}"#,
-        proj_zoro.display(),
-        proj_new.display()
-      ),
-    )
-    .unwrap();
+    let conn = rusqlite::Connection::open(code_dir.join("state.vscdb")).unwrap();
+    conn
+      .execute_batch("CREATE TABLE ItemTable (key TEXT UNIQUE, value BLOB);")
+      .unwrap();
+    conn
+      .execute(
+        "INSERT INTO ItemTable (key, value) VALUES ('history.recentlyOpenedPathsList', ?1)",
+        [format!(
+          r#"{{"entries":[{{"folderUri":"file://{}"}},{{"folderUri":"file://{}"}}]}}"#,
+          proj_zoro.display(),
+          proj_new.display()
+        )],
+      )
+      .unwrap();
+    drop(conn);
 
-    // JetBrains：与 VS Code 记录同一路径（应被全局去重，只剩 vscode 来源）
-    let jb_dir = app_support.join("JetBrains/IntelliJIdea2024.1/options");
+    // JetBrains 新版 additionalInfo：与 VS Code 一条重复（应去重）+ IDEA 独有
+    let jb_dir = app_support.join("JetBrains/IntelliJIdea2026.3/options");
     std::fs::create_dir_all(&jb_dir).unwrap();
     std::fs::write(
       jb_dir.join("recentProjects.xml"),
       format!(
-        r#"<option name="recentPaths"><list><option value="{}" /></list></option>"#,
-        proj_new.display()
+        r#"<option name="additionalInfo"><map>
+          <entry key="{}"><value><RecentProjectMetaInfo /></value></entry>
+          <entry key="{}"><value><RecentProjectMetaInfo /></value></entry>
+        </map></option>"#,
+        proj_new.display(),
+        proj_idea.display()
       ),
     )
     .unwrap();
@@ -349,10 +480,12 @@ mod tests {
     let existing = vec![(proj_zoro.to_string_lossy().into_owned(), "vscode".into())];
     let found = scan(&tmp, &existing);
 
-    assert_eq!(found.len(), 1, "去重与过滤后应只剩一条：{found:?}");
+    assert_eq!(found.len(), 2, "去重与过滤后应剩两条：{found:?}");
+    // vscode 来源先扫描，重复路径保留其来源
     assert_eq!(found[0].path, proj_new.to_string_lossy());
     assert_eq!(found[0].tool_id, "vscode");
-    assert_eq!(found[0].name, "brand-new");
+    assert_eq!(found[1].path, proj_idea.to_string_lossy());
+    assert_eq!(found[1].tool_id, "idea");
 
     std::fs::remove_dir_all(&tmp).unwrap();
   }

@@ -105,11 +105,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- 窗口本体是透明的，这里负责画出圆角卡片和边框 -->
+  <!-- 窗口本体是透明的，这里负责画出圆角卡片；阴影由系统窗口阴影提供 -->
   <UApp>
-    <div
-      class="flex h-screen flex-col overflow-hidden rounded-xl border border-default bg-default text-default shadow-xl"
-    >
+    <div class="flex h-screen flex-col overflow-hidden rounded-xl bg-default text-default">
       <header class="flex items-center gap-2 border-b border-default px-4 py-3">
         <UIcon name="i-lucide-clock-arrow-up" class="size-4 text-primary" />
         <span class="text-sm font-medium">最近项目</span>

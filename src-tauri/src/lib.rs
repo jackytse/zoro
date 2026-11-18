@@ -48,6 +48,9 @@ pub fn run() {
         ),
       )?;
 
+      // 原生目录选择对话框（添加项目时浏览目录用）
+      app.handle().plugin(tauri_plugin_dialog::init())?;
+
       // 加载/初始化配置并注册为全局状态，命令与托盘逻辑都从这里取数据
       let state = config::init(app.handle())?;
       app.manage(state);
@@ -61,7 +64,7 @@ pub fn run() {
         log::warn!("全局快捷键注册失败：{err}");
       }
 
-      // 自启动场景（--hidden）：隐藏主窗口，静默驻留托盘
+      // 自启动场景（--hidden）：历史行为，与 visible:false 一致保持静默
       if std::env::args().any(|a| a == "--hidden") {
         if let Some(main) = app.get_webview_window(tray::MAIN_LABEL) {
           let _ = main.hide();

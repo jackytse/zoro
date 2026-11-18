@@ -165,17 +165,18 @@ pub fn run() {
     .build(tauri::generate_context!())
     .expect("error while building tauri application")
     .run(|app, event| {
-      // macOS / Windows 才有 Reopen 变体（点 Dock / 任务栏图标唤回窗口）；
-      // Linux 上 RunEvent 没有这个变体，必须按平台裁掉，否则 Linux 编译不过
-      // （CI 的 deb 打包链路就是 Linux）。
-      #[cfg(any(target_os = "macos", windows))]
+      // Reopen 变体只有 macOS 才有（点 Dock 图标唤回窗口，对应
+      // NSApplicationDelegate 的 applicationShouldHandleReopen）。
+      // 注意：Windows 与 Linux 的 RunEvent 都没有这个变体——Linux 之前能
+      // 编译过只是因为旧 cfg 条件恰好为 false，实际语义一直是「仅 macOS」。
+      #[cfg(target_os = "macos")]
       {
         if let RunEvent::Reopen { .. } = event {
           tray::show_main_window(app);
         }
       }
       // 其他平台没有需要处理的运行期事件，显式消费参数避免未使用告警
-      #[cfg(not(any(target_os = "macos", windows)))]
+      #[cfg(not(target_os = "macos"))]
       {
         let _ = (app, event);
       }

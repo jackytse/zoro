@@ -8,13 +8,6 @@ import { useColorMode } from "@vueuse/core";
  */
 const colorMode = useColorMode();
 
-/** 导航项：与 src/router/index.ts 中的路由一一对应 */
-const navLinks = [
-  { label: "首页", to: "/" },
-  { label: "技术栈", to: "/stack" },
-  { label: "设置", to: "/settings" },
-];
-
 /** 在明暗之间直接翻转，不做 system 态的回退，避免点击后看起来“没反应” */
 function toggleColorMode() {
   colorMode.value = colorMode.value === "dark" ? "light" : "dark";
@@ -31,19 +24,6 @@ function toggleColorMode() {
             <UIcon name="i-lucide-hexagon" class="size-5 text-primary" />
             zoro
           </span>
-
-          <nav class="flex items-center gap-1">
-            <UButton
-              v-for="link in navLinks"
-              :key="link.to"
-              :to="link.to"
-              color="neutral"
-              variant="ghost"
-              size="sm"
-            >
-              {{ link.label }}
-            </UButton>
-          </nav>
 
           <div class="ml-auto">
             <UButton

@@ -173,10 +173,31 @@ foreach ($name in $Assets) {
 # 上传复用 ci/upload-release.sh（bash 脚本，对 Linux/mac/Windows 三端零改动）；
 # Windows 侧通过 Git for Windows 自带的 bash 执行，优先 PATH，其次常规安装路径
 if ($Ref -like "v*") {
-    $Bash = Get-Command bash -ErrorAction SilentlyContinue
-    if ($Bash) { $BashExe = $Bash.Source } else { $BashExe = "C:\Program Files\Git\bin\bash.exe" }
-    if (-not (Test-Path $BashExe)) {
-        Write-Host "== FAIL: 找不到 bash（Git for Windows），无法调用 upload-release.sh" -ForegroundColor Red
+    # 优先从 git.exe 的安装路径反推 Git 自带的 bash（CI 只需 Git for Windows）；
+    # 千万不能抓到 C:\WINDOWS\system32\bash.exe——那是 WSL 入口，跑 bash 脚本
+    # 会进入 Linux 环境输出乱码、PATH 语义全变，上传必然失败
+    $BashExe = $null
+    $GitCmd = (Get-Command git -ErrorAction SilentlyContinue).Source
+    if ($GitCmd) {
+        $GitDir = Split-Path $GitCmd                      # ...\Git\cmd 或 ...\Git\bin
+        $GitRoot = Split-Path $GitDir                     # ...\Git
+        foreach ($c in @(
+            (Join-Path $GitRoot "bin\bash.exe"),
+            (Join-Path $GitRoot "usr\bin\bash.exe"),
+            (Join-Path $GitDir "bash.exe")
+        )) { if (Test-Path $c) { $BashExe = $c; break } }
+    }
+    if (-not $BashExe) {
+        foreach ($c in @("C:\Program Files\Git\bin\bash.exe", "C:\Program Files\Git\usr\bin\bash.exe")) {
+            if (Test-Path $c) { $BashExe = $c; break }
+        }
+    }
+    if (-not $BashExe) {
+        $Bash = Get-Command bash -ErrorAction SilentlyContinue
+        if ($Bash -and $Bash.Source -notlike "*system32*") { $BashExe = $Bash.Source }
+    }
+    if (-not $BashExe) {
+        Write-Host "== FAIL: 找不到 Git for Windows 的 bash，无法调用 upload-release.sh" -ForegroundColor Red
         exit 1
     }
     Write-Host "使用 bash: $BashExe"

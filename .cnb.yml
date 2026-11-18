@@ -4,13 +4,16 @@
 # 四条链路，都是为了「改动一进仓库就有机器替你把关」：
 #   1. main push            → 质量门禁（前端构建 + 类型检查 + Rust 单测）
 #   2. Pull Request         → 同一套门禁，作为合入前的检查
-#   3. api_trigger_release  → 手动完整发布：Linux deb + macOS .app/.dmg（不打 tag 也能验，不发布）
+#   3. api_trigger_release  → 手动完整发布：Linux deb + macOS .app/.dmg + Windows msi/nsis
+#                             （不打 tag 也能验，不发布）
 #   4. tag push             → 发布链路：打包 + 校验产物 + 建 release + 上传附件
 #
-# macOS 产物跑在根组织的自建 Mac 节点上（runner.namespace: group + tags 匹配）。
+# macOS / Windows 产物跑在根组织的自建节点上（runner.namespace: group + tags 匹配）。
 # 自建节点限制（CNB 文档）：脚本直接跑在宿主机上——docker.image 不生效、
-# runner.cpus 无效，环境靠 ci/mac-setup.sh 在宿主机就地检查补装；
-# 也因此不声明 volumes（宿主 HOME 持久，工具链与缓存天然复用）。
+# runner.cpus 无效；Mac 走 bash 脚本，Windows 走 PowerShell 脚本（PS 5.x 默认 shell，
+# ci/win-*.ps1 必须带 UTF-8 BOM 才能正确解析中文），环境靠 ci/mac-setup.sh /
+# ci/win-setup.ps1 在宿主机就地检查补装；也因此不声明 volumes（宿主 HOME 持久，
+# 工具链与缓存天然复用）。
 #
 # 缓存策略（Linux 容器侧）：
 # /root/.rustup、/root/.cargo、/root/.local/share/pnpm 挂 copy-on-write 数据卷：
@@ -132,7 +135,7 @@ main:
         # 自建节点必须同时给出 namespace 与 tags：
         # namespace=group 表示在当前仓库根组织下调度，tags 是节点标签的子集
         namespace: group
-        tags:
+        tags: &runner-mac-tags
           - mac
           - arm64
       stages: &mac-release-stages
@@ -145,10 +148,29 @@ main:
         - name: report failure
           script: echo "macOS 发布测试未通过：产物未生成或校验失败，详见上方失败阶段"
 
+    - name: manual-release-windows
+      # Windows 自建节点标签为 [win, amd64]，按「与」关系子集匹配
+      runner:
+        namespace: group
+        tags: &runner-win-tags
+          - win
+          - amd64
+      stages: &win-release-stages
+        # Windows 节点同样没有容器环境，stage 默认 shell 是 PowerShell；
+        # 通过 powershell -File 显式调用，-ExecutionPolicy Bypass 绕过脚本执行策略限制
+        - name: prepare windows environment
+          script: powershell -ExecutionPolicy Bypass -File ci/win-setup.ps1
+        - name: build windows app
+          script: powershell -ExecutionPolicy Bypass -File ci/win-build.ps1
+      failStages:
+        - name: report failure
+          script: echo "Windows 发布测试未通过：产物未生成或校验失败，详见上方失败阶段"
+
 # 「$」为兜底分支键：tag 不属于任何分支，用兜底匹配接住所有 tag
 $:
   tag_push:
-    # 正式发布：Linux deb 与 macOS 应用并行构建，均含「tag 名 == 版本号」校验
+    # 正式发布：Linux deb、macOS 应用、Windows 安装包三端并行构建，
+    # 均含「tag 名 == 版本号」校验；各自失败各自上报，互不阻塞
     - name: release-linux
       runner: *runner-linux
       docker: *ci-docker
@@ -160,10 +182,17 @@ $:
     - name: release-mac
       runner:
         namespace: group
-        tags:
-          - mac
-          - arm64
+        tags: *runner-mac-tags
       stages: *mac-release-stages
       failStages:
         - name: report failure
           script: echo "macOS 版本发布测试未通过：产物未生成或校验失败，详见上方失败阶段"
+
+    - name: release-windows
+      runner:
+        namespace: group
+        tags: *runner-win-tags
+      stages: *win-release-stages
+      failStages:
+        - name: report failure
+          script: echo "Windows 版本发布测试未通过：产物未生成或校验失败，详见上方失败阶段"

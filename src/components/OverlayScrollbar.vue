@@ -90,7 +90,9 @@ onBeforeUnmount(() => {
     <!-- 视口：滚动行为的真正载体，overflow-y-auto 是滚动的前提（此前漏写
          导致内容直接溢出、整窗无法滚动）。osb-none 的隐藏规则见 <style> -->
     <div ref="viewport" class="osb-viewport h-full overflow-y-auto">
-      <div ref="content">
+      <!-- 右侧预留滑块宽度：覆盖滑块悬在 pr-2 空白带里，不再压住列表项
+           （选中/hover 的背景块右边缘与滑块之间留出间隙） -->
+      <div ref="content" class="pr-2">
         <slot />
       </div>
     </div>

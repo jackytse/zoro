@@ -36,8 +36,18 @@ export interface DesktopConfig {
   autostart: boolean;
   /** 终端打开方式："window" = 新窗口（默认），"tab" = 新选项卡（旧配置的 "existing" 同义） */
   terminalOpenMode: string | null;
+  /** 默认终端工具："iterm" / "terminal"；null = 自动推荐 */
+  terminalTool: string | null;
   /** 界面语言："zh-CN" | "zh-TW" | "en"；null = 跟随系统语言 */
   locale: string | null;
+}
+
+/** 本机终端工具扫描结果（设置页「默认终端」下拉框的单条记录） */
+export interface TerminalTool {
+  id: string;
+  name: string;
+  icon: string;
+  installed: boolean;
 }
 
 /** 从本机开发工具记录里探测到的候选项目 */
@@ -68,6 +78,13 @@ export const desktop = {
   /** 更换已配置项目的打开工具（设置页项目行下拉框）；返回更新后的配置 */
   setProjectTool: (projectId: string, toolId: string) =>
     invoke<DesktopConfig>("set_project_tool", { projectId, toolId }),
+
+  /** 扫描本机已安装的终端工具（设置页「默认终端」下拉框数据源） */
+  scanTerminalTools: () => invoke<TerminalTool[]>("scan_terminal_tools"),
+
+  /** 设置默认终端工具："iterm" / "terminal"，null = 自动推荐（装了 iTerm 用 iTerm） */
+  setTerminalTool: (tool: string | null) =>
+    invoke<DesktopConfig>("set_terminal_tool", { tool }),
 
   /** 设置终端打开方式："window"（新窗口，默认）或 "tab"（新选项卡） */
   setTerminalMode: (mode: "window" | "tab") =>

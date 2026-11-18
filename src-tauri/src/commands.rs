@@ -261,11 +261,52 @@ pub fn show_main_window(app: AppHandle) -> Result<(), String> {
 }
 
 /// 在系统终端中打开指定目录（最近项目悬停出现的终端图标按钮）。
-/// 打开方式（新窗口/新选项卡）读自配置的 terminalOpenMode。
+/// 打开方式（新窗口/新选项卡）与默认终端工具均读自配置。
 #[tauri::command]
 pub fn open_in_terminal(state: State<'_, AppState>, path: String) -> Result<(), String> {
-  let mode = state.config.lock().unwrap().terminal_mode().to_string();
-  opener::open_in_terminal(&path, &mode)
+  let (mode, tool) = {
+    let cfg = state.config.lock().unwrap();
+    (cfg.terminal_mode().to_string(), cfg.terminal_tool.clone())
+  };
+  opener::open_in_terminal(&path, &mode, tool.as_deref())
+}
+
+/// 扫描本机已安装的终端工具，供设置页「默认终端」下拉框渲染。
+/// 返回 [{id, name, icon, installed}]；前端据此推荐默认项（iTerm2 优先）。
+#[tauri::command]
+pub fn scan_terminal_tools() -> Vec<crate::opener::TerminalToolInfo> {
+  crate::opener::detect_terminal_tools()
+    .into_iter()
+    .map(|(id, name, icon, installed)| crate::opener::TerminalToolInfo {
+      id: id.to_string(),
+      name: name.to_string(),
+      icon: icon.to_string(),
+      installed,
+    })
+    .collect()
+}
+
+/// 设置默认终端工具："iterm" / "terminal"，None = 自动推荐。
+/// 推荐策略：装了 iTerm2 用 iTerm2，否则系统 Terminal。
+#[tauri::command]
+pub fn set_terminal_tool(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  tool: Option<String>,
+) -> Result<Config, String> {
+  // 只接受合法值（或 None），避免把垃圾数据写进配置文件
+  if let Some(t) = &tool {
+    if t != "iterm" && t != "terminal" {
+      return Err(format!("不支持的终端工具：{t}"));
+    }
+  }
+  {
+    let mut cfg = state.config.lock().unwrap();
+    cfg.terminal_tool = tool;
+  }
+  config::save(&state)?;
+  broadcast(&app);
+  Ok(state.config.lock().unwrap().clone())
 }
 
 /// 设置终端打开方式："window"（新窗口，默认）或 "tab"（新选项卡）。

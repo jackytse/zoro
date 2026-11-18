@@ -64,6 +64,11 @@ pub struct Config {
   /// 旧配置文件没有该字段时按默认值反序列化，不需要迁移。
   #[serde(default)]
   pub terminal_open_mode: Option<String>,
+  /// 默认终端工具："iterm" | "terminal"。
+  /// None = 自动推荐（装了 iTerm2 用 iTerm2，否则 Terminal.app）；
+  /// 用户显式选择后按选择执行，所选应用未安装时自动回落到另一个。
+  #[serde(default)]
+  pub terminal_tool: Option<String>,
   /// 界面语言："zh-CN" | "zh-TW" | "en"；None = 跟随系统语言。
   /// 前端两个窗口与 Rust 托盘菜单共用这一份语言设置。
   #[serde(default)]
@@ -156,6 +161,8 @@ impl Config {
       autostart: true,
       // 出厂默认：终端在新窗口打开（旧配置文件缺字段时同样按 window 处理）
       terminal_open_mode: None,
+      // 出厂默认：终端工具自动推荐（扫描已安装的终端后选常用的那个）
+      terminal_tool: None,
       // 出厂默认：跟随系统语言（前端按 navigator.language 探测）
       locale: None,
     }

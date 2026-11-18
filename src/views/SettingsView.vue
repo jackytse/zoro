@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { open } from "@tauri-apps/plugin-dialog";
-import { desktop, type DesktopConfig, type DetectedProject } from "../api/desktop";
+import { desktop, type DesktopConfig, type DetectedProject, type Project } from "../api/desktop";
 import { applyLocale, resolveLocale, LOCALE_LABELS, type AppLocale } from "../i18n";
 import ToolIcon from "../components/ToolIcon.vue";
 import { useNotify } from "../composables/useNotify";
@@ -354,6 +354,16 @@ async function changeTool(projectId: string, toolId: string) {
   }
 }
 
+/** 在默认终端打开项目目录（设置页项目行的终端图标）。
+ *  与托盘弹窗同一后端链路：成功不打扰，失败才提示原因 */
+async function openInTerminalFromSettings(project: Project) {
+  try {
+    await desktop.openInTerminal(project.path);
+  } catch (error) {
+    notify("error", t("tray.terminalOpenFailed"), { description: String(error) });
+  }
+}
+
 /** 展示用归一化：旧配置里的 "existing" 等价于 "tab"，避免 RadioGroup 匹配不到 */
 const terminalModeDisplay = computed<"window" | "tab">(
   () => (config.value?.terminalOpenMode === "tab" || config.value?.terminalOpenMode === "existing"
@@ -388,8 +398,51 @@ async function toggleAutostart(enabled: boolean) {
 
 let offConfigChanged: (() => void) | null = null;
 
+/* ---------- 通用设置：默认终端工具 ---------- */
+
+/** 本机终端扫描结果（iTerm2 / Terminal 等，含安装状态） */
+const terminalTools = ref<import("../api/desktop").TerminalTool[]>([]);
+
+/** 「默认终端」下拉选项：自动推荐 + 已装/未装的终端列表（未装的禁用） */
+const terminalToolItems = computed(() => [
+  { label: t("settings.terminalAuto"), value: "auto" },
+  ...terminalTools.value.map((tool) => ({
+    label: tool.installed ? tool.name : `${tool.name}（${t("settings.notInstalled")}）`,
+    value: tool.id,
+    disabled: !tool.installed,
+  })),
+]);
+
+/** 展示值：用户配置过的终端优先；未配置时默认选中扫描推荐的常用终端。
+ *  推荐结果只影响展示与默认态，写入配置后才会持久化 */
+const terminalToolDisplay = computed(
+  () =>
+    config.value?.terminalTool ??
+    (terminalTools.value.find((tool) => tool.installed && tool.id === "iterm")
+      ? "iterm"
+      : terminalTools.value.some((tool) => tool.installed)
+        ? "terminal"
+        : "auto"),
+);
+
+/** 更换默认终端；"auto" = 恢复自动推荐（配置存 null）。失败时回拉配置回弹 */
+async function setDefaultTerminal(value: string) {
+  try {
+    config.value = await desktop.setTerminalTool(value === "auto" ? null : value);
+  } catch (error) {
+    notify("error", t("settings.defaultTerminalFailed"), { description: String(error) });
+    config.value = await desktop.getConfig();
+  }
+}
+
 onMounted(async () => {
   await loadConfig();
+  // 扫描终端工具用于「默认终端」下拉；失败不阻塞页面，下拉退化为仅自动推荐
+  try {
+    terminalTools.value = await desktop.scanTerminalTools();
+  } catch (error) {
+    console.warn("终端工具扫描失败", error);
+  }
   offConfigChanged = desktop.onConfigChanged(() => void loadConfig());
 });
 </script>
@@ -505,6 +558,16 @@ export default { name: "SettingsView" };
             :aria-label="$t('settings.projectTool')"
             @update:model-value="(v: string) => changeTool(project.id, v)"
           />
+          <!-- 终端入口：与托盘弹窗一致，在默认终端打开项目目录 -->
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-square-terminal"
+            :aria-label="$t('tray.openInTerminal')"
+            :title="$t('tray.openInTerminal')"
+            @click="openInTerminalFromSettings(project)"
+          />
           <UButton
             size="xs"
             color="neutral"
@@ -572,11 +635,11 @@ export default { name: "SettingsView" };
           <p class="text-sm font-medium">{{ t("settings.language") }}</p>
           <p class="mt-0.5 text-xs text-muted">{{ t("settings.languageDesc") }}</p>
         </div>
-        <URadioGroup
+        <USelect
           :model-value="languageValue"
           :items="languageOptions"
-          variant="card"
-          orientation="horizontal"
+          size="sm"
+          class="w-44 shrink-0"
           :aria-label="t('settings.language')"
           @update:model-value="setLanguage"
         />
@@ -589,16 +652,33 @@ export default { name: "SettingsView" };
             {{ t("settings.terminalModeDesc") }}
           </p>
         </div>
-        <URadioGroup
+        <USelect
           :model-value="terminalModeDisplay"
           :items="[
             { label: t('settings.terminalWindow'), value: 'window' },
             { label: t('settings.terminalTab'), value: 'tab' },
           ]"
-          variant="card"
-          orientation="horizontal"
+          size="sm"
+          class="w-36 shrink-0"
           :aria-label="t('settings.terminalMode')"
           @update:model-value="setTerminalMode"
+        />
+      </div>
+      <!-- 默认终端工具：扫描本机已装终端，推荐项默认选中 -->
+      <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
+        <div>
+          <p class="text-sm font-medium">{{ t("settings.defaultTerminal") }}</p>
+          <p class="mt-0.5 text-xs text-muted">
+            {{ t("settings.defaultTerminalDesc") }}
+          </p>
+        </div>
+        <USelect
+          :model-value="terminalToolDisplay"
+          :items="terminalToolItems"
+          size="sm"
+          class="w-44 shrink-0"
+          :aria-label="t('settings.defaultTerminal')"
+          @update:model-value="setDefaultTerminal"
         />
       </div>
     </UCard>
@@ -658,7 +738,7 @@ export default { name: "SettingsView" };
             <UButton
               v-else
               size="sm"
-              color="neutral"
+              color="error"
               variant="soft"
               @click="disableShortcut"
             >

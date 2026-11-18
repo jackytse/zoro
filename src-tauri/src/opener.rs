@@ -33,11 +33,69 @@ fn is_terminal_tool(tool: &Tool) -> bool {
   matches!(tool.id.as_str(), "iterm" | "terminal")
 }
 
+/// 支持作为「默认终端」的应用清单（id / 展示名 / 图标 / 候选安装路径）。
+/// 只有 AppleScript 能可靠完成 cd 的终端才纳入：iTerm2 原生支持
+/// `create tab` + `write text`；Terminal.app 支持 `do script`。
+pub const TERMINAL_CANDIDATES: [(&str, &str, &str, [&str; 2]); 2] = [
+  (
+    "iterm",
+    "iTerm2",
+    "i-lucide-terminal",
+    ["/Applications/iTerm.app", "/Applications/iTerm2.app"],
+  ),
+  (
+    "terminal",
+    "Terminal",
+    "i-lucide-square-terminal",
+    [
+      // macOS 12+ 系统自带 Terminal 挪到了 /System/Applications
+      "/System/Applications/Utilities/Terminal.app",
+      "/Applications/Utilities/Terminal.app",
+    ],
+  ),
+];
+
+/// 终端工具扫描结果（发给前端设置页的单条记录）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalToolInfo {
+  pub id: String,
+  pub name: String,
+  pub icon: String,
+  pub installed: bool,
+}
+
+/// 扫描本机已安装的终端应用，返回 (id, 名称, 图标, 是否安装)。
+/// 设置页用它渲染「默认终端」下拉框并推荐默认项。
+/// 非 macOS 平台路径必然不存在，installed 全为 false（无害）。
+pub fn detect_terminal_tools() -> Vec<(&'static str, &'static str, &'static str, bool)> {
+  TERMINAL_CANDIDATES
+    .iter()
+    .map(|(id, name, icon, paths)| {
+      let installed = paths.iter().any(|p| Path::new(p).exists());
+      (*id, *name, *icon, installed)
+    })
+    .collect()
+}
+
+/// 从扫描结果里选出推荐默认项：优先 iTerm2（开发者最常用），
+/// 未安装时回落到系统自带 Terminal。任何 macOS 上 Terminal 都存在，
+/// 返回值总是可用。
+pub fn recommended_terminal_tool() -> &'static str {
+  let scan = detect_terminal_tools();
+  for (id, _, _, installed) in &scan {
+    if *installed && *id == "iterm" {
+      return "iterm";
+    }
+  }
+  "terminal"
+}
+
 /// 用给定工具打开一个已存在的路径。
 pub fn open_with_tool(tool: &Tool, path: &str) -> Result<(), String> {
-  // 终端类工具语义特殊，直接复用终端打开链路（含 AppleScript + 降级）
+  // 终端类工具语义特殊，直接复用终端打开链路（含单应用选定 + 降级）
   if is_terminal_tool(tool) {
-    return open_in_terminal(path, "window");
+    return open_in_terminal(path, "window", None);
   }
 
   let target = Path::new(path);
@@ -96,9 +154,11 @@ pub fn open_with_tool(tool: &Tool, path: &str) -> Result<(), String> {
 ///   新选项卡需要借助 System Events 发 ⌘T（需要「辅助功能」权限）
 ///
 /// mode："window" = 新窗口（默认）；"tab" = 新选项卡（旧版 "existing" 同义）。
-/// 选项卡失败（应用没装 / 无现有窗口 / 缺辅助功能权限）时逐级降级成新窗口，
+/// preferred：用户配置的默认终端（"iterm" | "terminal"）；None = 自动推荐
+/// （iTerm2 优先）。所选应用未安装时自动回落到另一个，保证总有结果。
+/// 选项卡失败（无现有窗口 / 缺辅助功能权限）时逐级降级成新窗口，
 /// 目录正确永远优先于窗口形态偏好。
-pub fn open_in_terminal(path: &str, mode: &str) -> Result<(), String> {
+pub fn open_in_terminal(path: &str, mode: &str, preferred: Option<&str>) -> Result<(), String> {
   let target = Path::new(path);
   if !target.exists() {
     return Err(format!("路径不存在或已被移动：{path}"));
@@ -113,15 +173,22 @@ pub fn open_in_terminal(path: &str, mode: &str) -> Result<(), String> {
     let cd = format!("cd {}", shell_quote(path));
     let want_tab = mode != "window";
 
-    // 同一次调用只驱动一个终端应用：按「已安装优先级」选定 iTerm 或 Terminal，
-    // 之后只在它身上完成 tab / window。之前的多应用连锁降级会在中间态出错时
-    // 层层下坠（iTerm 开了标签、Terminal 又开窗口），结果对用户完全不可预期。
+    // 同一次调用只驱动一个终端应用：显式配置优先，未配置或所选应用
+    // 未安装时用推荐策略（iTerm2 优先，回落系统 Terminal）。
     // AppleScript 控制应用需要 macOS 的「自动化」授权，首次调用会弹权限确认，
     // 拒绝时脚本报错并走降级。
-    let app = if Path::new("/Applications/iTerm.app").exists() {
-      "iTerm"
-    } else {
-      "Terminal"
+    let auto = if app_installed("iTerm") { "iTerm" } else { "Terminal" };
+    let app = match preferred {
+      Some("iterm") | Some("terminal") => {
+        let wanted = if preferred == Some("iterm") { "iTerm" } else { "Terminal" };
+        if app_installed(wanted) {
+          wanted
+        } else {
+          log::warn!("配置的默认终端 {wanted} 未安装，回落到 {auto}");
+          auto
+        }
+      }
+      _ => auto,
     };
     let label = if want_tab { "新选项卡" } else { "新窗口" };
 
@@ -173,6 +240,8 @@ pub fn open_in_terminal(path: &str, mode: &str) -> Result<(), String> {
 
   #[cfg(target_os = "windows")]
   {
+    // preferred 参数只在 macOS 的 AppleScript 链路有意义，这里显式消费掉
+    let _ = preferred;
     // start 后第一个空参数是窗口标题占位；/D 让新 cmd 的工作目录落在项目目录
     match Command::new("cmd")
       .args(["/C", "start", "", "/D"])
@@ -187,7 +256,19 @@ pub fn open_in_terminal(path: &str, mode: &str) -> Result<(), String> {
 
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
+    let _ = preferred;
     Err("当前平台暂不支持从终端打开目录".into())
+  }
+}
+
+/// 判断某个终端应用是否已安装（按 .app 包路径探测）。
+#[cfg(target_os = "macos")]
+fn app_installed(app: &str) -> bool {
+  match app {
+    "iTerm" => Path::new("/Applications/iTerm.app").exists()
+      || Path::new("/Applications/iTerm2.app").exists(),
+    _ => Path::new("/System/Applications/Utilities/Terminal.app").exists()
+      || Path::new("/Applications/Utilities/Terminal.app").exists(),
   }
 }
 

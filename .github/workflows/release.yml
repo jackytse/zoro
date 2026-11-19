@@ -5,22 +5,15 @@
 #   2. workflow_dispatch        → 手动触发（仅验证构建，不打 tag 不上传 Release）
 #
 # 与 CNB 流水线的产物命名保持一致：zoro_<ver>_<os>_<arch>
-#   linux  → zoro_<ver>_linux_amd64.deb / .AppImage（AppImage 供应用内自动更新）
-#   macos  → zoro_<ver>_macos_aarch64.dmg / .app.tar.gz（tar.gz 供自动更新）
-#   windows→ zoro_<ver>_windows_amd64-setup.exe / .msi（setup.exe 供自动更新）
-# 附件一律附带 .sha256 指纹；更新包附带 .sig（minisign 签名）。
+#   linux  → zoro_<ver>_linux_amd64.deb
+#   macos  → zoro_<ver>_macos_aarch64.dmg
+#   windows→ zoro_<ver>_windows_amd64-setup.exe / zoro_<ver>_windows_amd64.msi
+# 附件一律附带 .sha256 指纹文件。
 #
-# 应用自动更新：构建时通过 --config 覆盖开启 bundle.createUpdaterArtifacts，
-# 生成带签名的更新包；最后由 updater-metadata job 汇总各平台 .sig 生成
-# latest.json 上传到 Release——应用内 updater 插件通过
-# https://github.com/jackytse/zoro/releases/latest/download/latest.json
-# 检测新版本（latest/download 链接永远指向最新 release，无需改端点）。
-#
-# ⚠️ 需要在仓库 Settings → Secrets 配置更新签名私钥（本地生成于 ~/.tauri/zoro.key）：
-#   TAURI_SIGNING_PRIVATE_KEY            私钥文件内容
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   私钥密码（无密码密钥留空即可）
-# 未配置时 createUpdaterArtifacts 会因缺签名密钥而构建失败——这是有意的，
-# 避免「发了 release 但更新包没签名」导致应用内更新永远校验失败。
+# 应用内自动更新不走本流水线：更新端点是 CNB（tauri.conf.json 的
+# plugins.updater），更新包签名与 latest.json 由 CNB tag 流水线生成
+# 并推送到仓库 updater 分支。本流水线只产出普通安装包，因此也无需
+# 配置更新签名密钥。
 #
 # GitHub 官方托管 runner 环境干净（无第三方管家类软件拦截未签名工具），
 # NSIS / WiX 可正常构建，不存在 CNB Windows 自建节点上安装包被杀软
@@ -50,9 +43,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ---------- Linux（deb + AppImage）----------
-          # ubuntu-22.04 自带较旧的 glibc，产出的 deb 兼容面更广；
-          # AppImage 是 Linux 上唯一支持应用内自动更新的打包格式
+          # ---------- Linux（deb）----------
+          # ubuntu-22.04 自带较旧的 glibc，产出的 deb 兼容面更广
           - os: linux
             runner: ubuntu-22.04
           # ---------- macOS（Apple Silicon，dmg）----------
@@ -68,10 +60,6 @@ jobs:
       # pnpm 版本必须与 lockfile 格式匹配：CNB 侧 Dockerfile.ci / setup.sh
       # 同样固定 12.21.0，三处任一升级都要同步
       PNPM_VERSION: 12.21.0
-      # 更新签名私钥：createUpdaterArtifacts 开启后 tauri 会用它签更新包。
-      # 密钥无密码时 PASSWORD 允许为空串
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - name: checkout
@@ -129,23 +117,20 @@ jobs:
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # --config 覆盖：只在 GitHub 构建开启 createUpdaterArtifacts（生成
-      # 签名更新包）。CNB 流水线与本地构建不传该覆盖，因此不需要签名密钥；
-      # 应用内更新统一以 GitHub Release 的 latest.json 为端点
-      - name: build linux (deb + appimage)
+      - name: build linux (deb)
         if: matrix.os == 'linux'
-        run: pnpm tauri build --bundles deb --bundles appimage --config '{"bundle":{"createUpdaterArtifacts":true}}'
+        run: pnpm tauri build --bundles deb
 
       - name: build macos (dmg)
         if: matrix.os == 'macos'
-        run: pnpm tauri build --bundles dmg --config '{"bundle":{"createUpdaterArtifacts":true}}'
+        run: pnpm tauri build --bundles dmg
 
       - name: build windows (nsis + msi)
         if: matrix.os == 'windows'
         # PowerShell 会把裸逗号当数组展开，这里走 cmd 语义要小心：
         # 用重复 flag 的写法，与 CNB 侧 win-build.ps1 一致
         shell: bash
-        run: pnpm tauri build --bundles nsis --bundles msi --config '{"bundle":{"createUpdaterArtifacts":true}}'
+        run: pnpm tauri build --bundles nsis --bundles msi
 
       - name: collect assets (linux)
         if: matrix.os == 'linux'
@@ -153,15 +138,8 @@ jobs:
         run: |
           V="${GITHUB_REF_NAME#v}"
           mkdir -p release-assets
-          B=src-tauri/target/release/bundle
-          cp "$B"/deb/*.deb "release-assets/zoro_${V}_linux_amd64.deb"
-          # AppImage 及其签名是应用内自动更新的更新包（deb 用户手动升级）
-          cp "$B"/appimage/*.AppImage "release-assets/zoro_${V}_linux_amd64.AppImage"
-          cp "$B"/appimage/*.AppImage.sig "release-assets/zoro_${V}_linux_amd64.AppImage.sig"
-          ( cd release-assets && for f in *; do
-              case "$f" in *.sig) continue ;; esac
-              sha256sum "$f" > "$f.sha256"
-            done )
+          cp src-tauri/target/release/bundle/deb/*.deb "release-assets/zoro_${V}_linux_amd64.deb"
+          ( cd release-assets && sha256sum "zoro_${V}_linux_amd64.deb" > "zoro_${V}_linux_amd64.deb.sha256" )
           ls -lh release-assets
 
       - name: collect assets (macos)
@@ -170,16 +148,8 @@ jobs:
         run: |
           V="${GITHUB_REF_NAME#v}"
           mkdir -p release-assets
-          B=src-tauri/target/release/bundle
-          cp "$B"/dmg/*.dmg "release-assets/zoro_${V}_macos_aarch64.dmg"
-          # createUpdaterArtifacts 开启后 macos 目录会多出 <productName>.app.tar.gz(+.sig)，
-          # 是应用内自动更新的更新包；tauri 默认名不带版本号，统一改成发布命名
-          cp "$B"/macos/zoro.app.tar.gz "release-assets/zoro_${V}_macos_aarch64.app.tar.gz"
-          cp "$B"/macos/zoro.app.tar.gz.sig "release-assets/zoro_${V}_macos_aarch64.app.tar.gz.sig"
-          ( cd release-assets && for f in *; do
-              case "$f" in *.sig) continue ;; esac
-              shasum -a 256 "$f" > "$f.sha256"
-            done )
+          cp src-tauri/target/release/bundle/dmg/*.dmg "release-assets/zoro_${V}_macos_aarch64.dmg"
+          ( cd release-assets && shasum -a 256 "zoro_${V}_macos_aarch64.dmg" > "zoro_${V}_macos_aarch64.dmg.sha256" )
           ls -lh release-assets
 
       - name: collect assets (windows)
@@ -188,18 +158,11 @@ jobs:
         run: |
           V="${GITHUB_REF_NAME#v}"
           mkdir -p release-assets
-          B=src-tauri/target/release/bundle
           # tauri 默认名形如 zoro_0.1.4_x64-setup.exe / zoro_0.1.4_x64_en-US.msi，
-          # 统一改成与 CNB 侧一致的 <os>_<arch> 命名；
-          # setup.exe 是应用内自动更新的更新包（.sig 是 minisign 签名）
-          cp "$B"/nsis/*-setup.exe "release-assets/zoro_${V}_windows_amd64-setup.exe"
-          cp "$B"/nsis/*-setup.exe.sig "release-assets/zoro_${V}_windows_amd64-setup.exe.sig"
-          cp "$B"/msi/*.msi "release-assets/zoro_${V}_windows_amd64.msi"
-          cp "$B"/msi/*.msi.sig "release-assets/zoro_${V}_windows_amd64.msi.sig"
-          ( cd release-assets && for f in *; do
-              case "$f" in *.sha256|*.sig) continue ;; esac
-              sha256sum "$f" > "$f.sha256"
-            done )
+          # 统一改成与 CNB 侧一致的 <os>_<arch> 命名
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe "release-assets/zoro_${V}_windows_amd64-setup.exe"
+          cp src-tauri/target/release/bundle/msi/*.msi "release-assets/zoro_${V}_windows_amd64.msi"
+          ( cd release-assets && for f in *; do sha256sum "$f" > "$f.sha256"; done )
           ls -lh release-assets
 
       - name: create release if missing
@@ -236,63 +199,3 @@ jobs:
           name: zoro-${{ matrix.os }}
           path: release-assets/*
           if-no-files-found: error
-
-  # ---------- 更新元数据：汇总各平台 .sig 生成 latest.json ----------
-  #
-  # 应用内 updater 通过 Release 的 latest/download/latest.json 检测更新，
-  # 所以 latest.json 必须在三平台产物齐备后生成——任一平台失败则跳过，
-  # 避免发布出不完整的更新清单（用户下载到一半的更新包）。
-  updater-metadata:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    steps:
-      - name: generate and upload latest.json
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          DIR=release-assets
-          gh release download "$GITHUB_REF_NAME" --dir "$DIR" --clobber
-          node - "$TAG" <<'EOF'
-          const fs = require("fs");
-          const tag = process.argv[2];
-          const version = tag.replace(/^v/, "");
-          const dir = "release-assets";
-          // 下载 URL 用 GitHub Releases 的固定格式，latest.json 里写全量地址
-          const base = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${tag}`;
-
-          /** 读取同名 .sig 签名文件内容（updater 校验更新包用） */
-          const sig = (name) => fs.readFileSync(`${dir}/${name}.sig`, "utf8").trim();
-          const find = (suffix) => fs.readdirSync(dir).find((f) => f.endsWith(suffix) && !f.endsWith(".sig"));
-
-          const platforms = {};
-          // Linux 的应用内更新只支持 AppImage；deb 由用户手动升级
-          const appimage = find(".AppImage");
-          if (appimage) platforms["linux-x86_64"] = { signature: sig(appimage), url: `${base}/${appimage}` };
-          // 本流水线 mac 只构建 Apple Silicon（macos-latest = arm64）
-          const macTar = find(".app.tar.gz");
-          if (macTar) platforms["darwin-aarch64"] = { signature: sig(macTar), url: `${base}/${macTar}` };
-          // Windows 更新走 NSIS setup.exe（msi 面向企业部署，不进更新链路）
-          const exe = find("-setup.exe");
-          if (exe) platforms["windows-x86_64"] = { signature: sig(exe), url: `${base}/${exe}` };
-
-          if (Object.keys(platforms).length === 0) {
-            console.error("::error::release 里没有任何带 .sig 的更新包，无法生成 latest.json");
-            process.exit(1);
-          }
-
-          // pub_date 用 ISO 8601（updater 端要求秒级精度，去掉毫秒尾巴）
-          const meta = {
-            version,
-            notes: `zoro ${tag}`,
-            pub_date: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-            platforms,
-          };
-          fs.writeFileSync(`${dir}/latest.json`, JSON.stringify(meta, null, 2));
-          console.log(JSON.stringify(meta, null, 2));
-          EOF
-          # --clobber 允许重跑覆盖
-          gh release upload "$GITHUB_REF_NAME" "$DIR/latest.json" --clobber
-          echo "== latest.json 已上传 =="

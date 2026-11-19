@@ -66,8 +66,20 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ("编译耗时: {0}s" -f ([int]([DateTime]::Now - $StartAt).TotalSeconds))
 
 # ---------- 3. 安装包打包（尽力而为） ----------
+# 应用内自动更新：TAURI_SIGNING_PRIVATE_KEY（CNB 仓库环境变量）存在时，
+# 给 nsis 打包追加 --config 覆盖开启 createUpdaterArtifacts——tauri 会在
+# setup.exe 旁产出 .sig 签名（Windows 更新链路用的就是 setup.exe）。
+# JSON 无空格可安全分词，直接拼进参数即可。
+$UpdaterConfig = ""
+if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+    $UpdaterConfig = '{"bundle":{"createUpdaterArtifacts":true}}'
+    Write-Host "检测到签名密钥，开启应用内更新产物"
+} else {
+    Write-Host "未配置 TAURI_SIGNING_PRIVATE_KEY，跳过更新包签名（应用内更新将无 Windows 条目）"
+}
+
 $HasNsis = $false
-pnpm exec tauri build --bundles nsis
+pnpm exec tauri build --bundles nsis $UpdaterConfig
 if ($LASTEXITCODE -eq 0) {
     $HasNsis = $true
 } else {
@@ -113,6 +125,14 @@ if ($HasNsis) {
         Copy-Item $Nsis.FullName (Join-Path $AssetDir $Name)
         $Assets += $Name
         Write-Host ("产物: {0} ({1:N1} MB)" -f $Nsis.FullName, ($Nsis.Length / 1MB))
+        # 更新包签名（Windows 应用内更新链路用它校验 setup.exe），随附件一并上传
+        $NsisSig = "$($Nsis.FullName).sig"
+        if (Test-Path $NsisSig) {
+            Copy-Item $NsisSig (Join-Path $AssetDir "$Name.sig")
+            Write-Host "产物: $Name.sig（应用内更新签名）"
+        } else {
+            Write-Host "WARN: 未找到 setup.exe.sig，应用内更新将无 Windows 条目" -ForegroundColor Yellow
+        }
     }
 }
 if ($HasMsi) {
@@ -202,7 +222,13 @@ if ($Ref -like "v*") {
     }
     Write-Host "使用 bash: $BashExe"
     $UploadFiles = @()
-    foreach ($name in $Assets) { $UploadFiles += "$AssetDir/$name"; $UploadFiles += "$AssetDir/$name.sha256" }
+    foreach ($name in $Assets) {
+        $UploadFiles += "$AssetDir/$name"
+        $UploadFiles += "$AssetDir/$name.sha256"
+        # 更新包签名（仅 setup.exe 有）：一并上传供更新清单生成使用
+        $SigPath = "$AssetDir/$name.sig"
+        if (Test-Path $SigPath) { $UploadFiles += $SigPath }
+    }
     & $BashExe ci/upload-release.sh @UploadFiles
     if ($LASTEXITCODE -ne 0) {
         Write-Host "== FAIL: release 上传失败" -ForegroundColor Red

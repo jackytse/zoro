@@ -10,11 +10,17 @@
 # 设计说明：
 #   - CNB 自建 Mac 节点不支持 docker image 插件（cnbcool/attachments 跑不了），
 #     所以 Linux 与 mac 统一走 OpenAPI + curl，脚本对两端环境零依赖
-#     （只需 curl + node，两端都已具备）；
+#     （只需 curl + node + git，三端都已具备）；
 #   - 附件同名时 overwrite=true 覆盖，重跑流水线幂等；
 #   - release 已存在时直接复用（GET 404 才 POST 创建），重跑不会报冲突；
 #   - 所有请求显式检查状态码并在失败时打印响应体：CI 日志里能直接看到
-#     4xx/5xx 的原因，而不是 curl -f 静默退出码。
+#     4xx/5xx 的原因，而不是 curl -f 静默退出码；
+#   - 附件上传完会后尝试「更新清单 finalize」：从 release 附件里收集各平台
+#     更新包的 .sig 签名，生成 latest.json 并 force push 到仓库 updater 分支
+#     ——应用内 updater 的端点就是
+#     https://cnb.cool/<repo>/-/raw/updater/latest.json（见 tauri.conf.json）。
+#     三平台流水线并行，谁最后完成谁写入最全的清单；单平台失败时清单里
+#     缺该平台条目，对应平台用户表现为「无更新」，不影响其他平台升级。
 set -euo pipefail
 
 API_BASE="${CNB_API_ENDPOINT:-https://api.cnb.cool}"
@@ -139,3 +145,101 @@ for f in "$@"; do
 done
 
 echo "✓ 全部附件上传完成: https://cnb.cool/$REPO_SLUG/-/releases/tag/$TAG"
+
+# ---------- 4. 更新清单 finalize：生成 latest.json 并推到 updater 分支 ----------
+# 说明见文件头部；任何失败只 WARN 不阻塞——发布主链路（release 附件）已完成，
+# 更新清单是增强能力，不能因为它把整条发布流水线判红。
+finalize_updater_manifest() {
+  # ---- 4.1 下载本 release 全部附件里的 .sig 签名文件 ----
+  local SIG_DIR
+  SIG_DIR="$(mktemp -d)"
+  local sig_assets
+  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$RELEASE_API/$RELEASE_ID")"
+  if [[ ! "$code" =~ ^2 ]]; then
+    echo "WARN: finalize 跳过（读取 release 附件列表失败 HTTP $code）" >&2
+    rm -rf "$SIG_DIR"; return 0
+  fi
+  node -e '
+    const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    for (const a of (r.assets || [])) {
+      if (a.path && a.path.endsWith(".sig")) console.log(a.path);
+    }
+  ' "$RESP_FILE" > "$SIG_DIR/list.txt"
+
+  local count=0
+  while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    # 附件下载走 api.cnb.cool 域名（响应里给的就是该域名），需带鉴权头
+    if curl -s -o "$SIG_DIR/$(basename "$p")" -w '%{http_code}' -H "$AUTH_HEADER" \
+        "$API_BASE$p" | grep -q '^2'; then
+      count=$((count + 1))
+    fi
+  done < "$SIG_DIR/list.txt"
+  echo "finalize: 下载到 $count 个签名文件"
+
+  # ---- 4.2 组装 latest.json（只收录「包 + 签名」都存在的平台） ----
+  # URL 统一写 cnb.cool 域名：匿名可下载（api.cnb.cool 需 token，客户端没有）
+  local OUT="$SIG_DIR/latest.json"
+  node -e '
+    const fs = require("fs");
+    const dir = process.argv[1], tag = process.argv[2], slug = process.argv[3];
+    const base = "https://cnb.cool/" + slug + "/-/releases/download/" + tag;
+    const sig = (name) => fs.readFileSync(dir + "/" + name + ".sig", "utf8").trim();
+    const has = (name) => fs.existsSync(dir + "/" + name) && fs.existsSync(dir + "/" + name + ".sig");
+    // Linux 唯一支持应用内更新的 bundle 是 AppImage；mac 是 .app.tar.gz；
+    // Windows 是 NSIS setup.exe（msi 面向企业部署，不进更新链路）
+    const candidates = [
+      ["linux-x86_64", ".AppImage"],
+      ["darwin-aarch64", ".app.tar.gz"],
+      ["windows-x86_64", "-setup.exe"],
+    ];
+    const platforms = {};
+    for (const [platform, suffix] of candidates) {
+      const name = fs.readdirSync(dir)
+        .filter((f) => f.endsWith(suffix) && !f.endsWith(".sig") && fs.existsSync(dir + "/" + f + ".sig"))
+        .sort((a, b) => b.length - a.length)[0]; // 防前缀混淆：取最长匹配
+      if (name) platforms[platform] = { signature: sig(name), url: base + "/" + name };
+    }
+    const version = tag.replace(/^v/, "");
+    const meta = {
+      version,
+      notes: "zoro " + tag,
+      pub_date: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      platforms,
+    };
+    fs.writeFileSync(dir + "/latest.json", JSON.stringify(meta, null, 2));
+    console.log(JSON.stringify(meta.platforms, null, 2));
+  ' "$SIG_DIR" "$TAG" "$REPO_SLUG" || {
+    echo "WARN: finalize 跳过（latest.json 组装失败）" >&2
+    rm -rf "$SIG_DIR"; return 0
+  }
+
+  # ---- 4.3 force push 到 updater 分支（孤儿分支，只含 latest.json 一个文件） ----
+  # CNB 没有 GitHub 那样的 releases/latest/download 固定别名，所以用一个
+  # 永远指向最新清单的专用分支充当「latest」；raw 地址即 updater 端点。
+  if [[ "$(node -p "Object.keys(JSON.parse(require('fs').readFileSync('$OUT')).platforms).length")" -eq 0 ]]; then
+    echo "WARN: finalize 跳过（无任何平台更新包，通常意味着签名密钥未配置或打包失败）" >&2
+    rm -rf "$SIG_DIR"; return 0
+  fi
+
+  local PUSH_DIR
+  PUSH_DIR="$(mktemp -d)"
+  if (
+    cd "$PUSH_DIR" &&
+    git init -q -b updater &&
+    cp "$OUT" latest.json &&
+    git -c user.name="cnb-ci" -c user.email="ci@cnb.cool" add latest.json &&
+    git -c user.name="cnb-ci" -c user.email="ci@cnb.cool" commit -q -m "chore: latest.json for $TAG" &&
+    git push -q --force \
+      "https://${CNB_TOKEN_USER_NAME:-cnb}:${CNB_TOKEN}@cnb.cool/${REPO_SLUG}.git" \
+      HEAD:refs/heads/updater
+  ) 2>/dev/null; then
+    echo "✓ 更新清单已发布: https://cnb.cool/$REPO_SLUG/-/raw/updater/latest.json"
+  else
+    echo "WARN: updater 分支推送失败（清单保留在 $SIG_DIR，可手动检查）" >&2
+    return 0
+  fi
+  rm -rf "$SIG_DIR" "$PUSH_DIR"
+}
+
+finalize_updater_manifest

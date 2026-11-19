@@ -37,14 +37,40 @@ if [[ "$REF" == v* ]]; then
 fi
 
 # ---------- 2. 打包 ----------
+# 应用内自动更新：TAURI_SIGNING_PRIVATE_KEY（CNB 仓库环境变量）存在时，
+# 通过 --config 覆盖开启 createUpdaterArtifacts，让 tauri 产出带 minisign
+# 签名的更新包（Linux 更新包 = AppImage + .sig）。密钥未配置时不加覆盖，
+# 纯 deb 链路照常工作——本地构建也不需要签名密钥。
+# JSON 无空格可安全参与分词，故故意不加引号展开（bash 3.2/5.x 通用）。
+UPDATER_CONFIG=""
+if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+  UPDATER_CONFIG='{"bundle":{"createUpdaterArtifacts":true}}'
+  echo "检测到签名密钥，开启应用内更新产物"
+else
+  echo "未配置 TAURI_SIGNING_PRIVATE_KEY，跳过更新包签名（应用内更新将无 Linux 条目）"
+fi
+
 # tauri build 会先跑 beforeBuildCommand（pnpm build），再编译 release 产物。
-# 先清掉 bundle 输出目录：编译缓存卷里会残留旧版本的 deb，
+# 先清掉 bundle 输出目录：编译缓存卷里会残留旧版本的 deb/appimage，
 # 不清理的话后面的产物收集（ls | head -1）可能挑中上一次的旧包。
 TARGET_ROOT="${CARGO_TARGET_DIR:-src-tauri/target}"
 rm -rf "$TARGET_ROOT/release/bundle"
 start_at=$SECONDS
-pnpm exec tauri build --bundles deb
+# shellcheck disable=SC2086
+pnpm exec tauri build --bundles deb $UPDATER_CONFIG
 echo "打包耗时: $((SECONDS - start_at))s"
+
+# AppImage（更新包载体）：联网下载 linuxdeploy 在 CI 上偶发失败，
+# 所以单独一次构建、尽力而为——失败只 WARN，deb 主产物不受影响
+APPIMAGE=""
+if [[ -n "$UPDATER_CONFIG" ]]; then
+  if pnpm exec tauri build --bundles appimage $UPDATER_CONFIG; then
+    APPIMAGE="$(ls "$TARGET_ROOT/release/bundle/appimage"/*.AppImage 2>/dev/null | head -1)"
+    echo "产物: $APPIMAGE"
+  else
+    echo "WARN: AppImage 打包失败（linuxdeploy 下载不稳定？），应用内更新将无 Linux 条目" >&2
+  fi
+fi
 
 # ---------- 3. 产物校验 ----------
 # deb 落盘位置跟随 CARGO_TARGET_DIR：设置了缓存卷时 bundle 输出在
@@ -79,6 +105,13 @@ if [[ "$REF" == v* ]]; then
   cp "$DEB" "$ASSET_DIR/$ASSET_DEB"
   # sha256 指纹文件与 deb 同名，方便下载后校验
   ( cd "$ASSET_DIR" && sha256sum "$ASSET_DEB" > "$ASSET_DEB.sha256" )
+  # AppImage 与 .sig 一并上传（update-release.sh 会据此生成更新清单 latest.json）
+  if [[ -n "$APPIMAGE" ]]; then
+    AIMAGE_BASE="$(basename "$APPIMAGE")"
+    ASSET_IMAGE="$(echo "$AIMAGE_BASE" | sed -E 's/_(amd64|arm64|aarch64)\.AppImage$/_linux_\1.AppImage/')"
+    cp "$APPIMAGE" "$ASSET_DIR/$ASSET_IMAGE"
+    cp "${APPIMAGE}.sig" "$ASSET_DIR/$ASSET_IMAGE.sig"
+  fi
   bash ci/upload-release.sh "$ASSET_DIR"/*
 else
   echo "非 tag 构建（$REF），跳过 release 上传"

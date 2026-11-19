@@ -39,6 +39,19 @@ if [[ "$REF" == v* ]]; then
 fi
 
 # ---------- 2. 打包（.app + .dmg） ----------
+# 应用内自动更新：TAURI_SIGNING_PRIVATE_KEY（CNB 仓库环境变量）存在时通过
+# --config 覆盖开启 createUpdaterArtifacts——macOS 会在 macos bundle 目录
+# 额外产出 zoro.app.tar.gz（.app 的 tar 打包）与 .sig 签名，即应用内更新包。
+# 密钥未配置时不加覆盖，dmg/app.zip 链路照常（应用内更新无 macOS 条目）。
+# JSON 无空格可安全参与分词，故意不加引号展开（mac 自带 bash 3.2 兼容）。
+UPDATER_CONFIG=""
+if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+  UPDATER_CONFIG='{"bundle":{"createUpdaterArtifacts":true}}'
+  echo "检测到签名密钥，开启应用内更新产物"
+else
+  echo "未配置 TAURI_SIGNING_PRIVATE_KEY，跳过更新包签名（应用内更新将无 macOS 条目）"
+fi
+
 # tauri build 会先跑 beforeBuildCommand（pnpm build）再编译 release；
 # --bundles app,dmg 同时产出应用包与磁盘映像，一次编译不浪费。
 # 先清掉 bundle 输出目录：编译缓存卷里会残留旧版本的 deb/dmg/app，
@@ -46,7 +59,8 @@ fi
 TARGET_ROOT="${CARGO_TARGET_DIR:-src-tauri/target}"
 rm -rf "$TARGET_ROOT/release/bundle"
 start_at=$SECONDS
-pnpm exec tauri build --bundles app,dmg
+# shellcheck disable=SC2086
+pnpm exec tauri build --bundles app,dmg $UPDATER_CONFIG
 echo "打包耗时: $((SECONDS - start_at))s"
 
 # .app/.dmg 落盘位置同样跟随 CARGO_TARGET_DIR（自建 Mac 节点用 HOME 缓存卷增量编译）
@@ -114,6 +128,16 @@ if [[ "$REF" == v* ]]; then
   # dmg 与指纹文件一并收集到 ASSET_DIR，统一上传
   cp "$DMG" "$ASSET_DIR/$ASSET_DMG"
   ( cd "$ASSET_DIR" && shasum -a 256 "$ASSET_DMG" > "$ASSET_DMG.sha256" )
+  # 更新包（.app.tar.gz + .sig）一并上传，upload-release.sh 据此生成
+  # latest.json 的 darwin-aarch64 条目；仅开启 createUpdaterArtifacts 后才有
+  UPDATER_TAR="$APP_DIR/zoro.app.tar.gz"
+  if [[ -f "$UPDATER_TAR" && -f "$UPDATER_TAR.sig" ]]; then
+    ASSET_TAR="zoro_${PLIST_VER}_macos_${MAC_ARCH}.app.tar.gz"
+    cp "$UPDATER_TAR" "$ASSET_DIR/$ASSET_TAR"
+    cp "$UPDATER_TAR.sig" "$ASSET_DIR/$ASSET_TAR.sig"
+  else
+    echo "WARN: 未找到应用内更新包（$UPDATER_TAR），跳过 macOS 更新条目" >&2
+  fi
   bash ci/upload-release.sh "$ASSET_DIR"/*
 else
   echo "非 tag 构建（$REF），跳过 release 上传"

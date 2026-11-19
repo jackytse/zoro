@@ -108,6 +108,19 @@ if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
     Write-Host "corepack 不可用，退回 npm 全局安装..."
     npm install -g pnpm@12.21.0
+    # npm 全局 bin 目录不一定在 PATH（节点 node 升到 26 后 corepack 不再捆绑，
+    # 走 npm -g 兜底时实测 pnpm 命令找不到）：显式把 prefix 目录加进
+    # 当前进程 PATH（本次 stage 生效）与用户级持久 PATH（后续 stage 命中）
+    $NpmPrefix = (npm config get prefix 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $NpmPrefix -and (Test-Path $NpmPrefix.Trim())) {
+        $NpmPrefix = $NpmPrefix.Trim()
+        $env:PATH = "$NpmPrefix;$env:PATH"
+        $UserPath2 = [Environment]::GetEnvironmentVariable("PATH", "User")
+        if ($UserPath2 -notlike "*$NpmPrefix*") {
+            [Environment]::SetEnvironmentVariable("PATH", "$NpmPrefix;$UserPath2", "User")
+            Write-Host "已写入用户 PATH: $NpmPrefix"
+        }
+    }
 }
 Write-Host "pnpm: $(pnpm -v)"
 

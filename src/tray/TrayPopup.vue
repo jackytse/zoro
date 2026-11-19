@@ -92,44 +92,31 @@ async function quitApp() {
 const {
   phase: updatePhase,
   newVersion,
-  errorMessage,
+  progress: downloadProgress,
   checkForUpdate,
   downloadAndInstall,
   restartApp,
+  formatMB,
 } = useUpdater();
 
-/** 左下角「检测更新」：按当前通道检测，结果全部用 toast 反馈并给出后续动作。
- *  与主窗口启动检测的区别：这里由用户主动触发，所以「已是最新」也要出声 */
+/** 左下角「检测更新」：结果不用 toast（弹窗是独立 webview，toast 表现
+ *  不稳定），直接在按钮旁内联显示状态文字，颜色按语义区分 */
 async function checkUpdateFromPopup() {
   await checkForUpdate();
-  if (updatePhase.value === "available") {
-    // 发现新版本：不自动消失，给「立即更新」入口，下载/安装在后台继续
-    notify("info", t("settings.newVersionFound", { version: newVersion.value }), {
-      duration: 0,
-      actions: [{ label: t("settings.updateNow"), onClick: () => void installFromPopup() }],
-    });
-  } else if (updatePhase.value === "latest") {
-    notify("info", t("settings.upToDate"));
-  } else if (updatePhase.value === "error") {
-    // 常见原因：无网络、该通道还没有包含更新清单的发布
-    notify("error", t("settings.updateCheckFailed"), { description: errorMessage.value });
-  }
 }
 
-/** toast「立即更新」回调：下载安装完成后提示重启。不自动重启——
- *  即便用户中途收起弹窗（窗口只是隐藏），Rust 侧下载仍会继续完成，
- *  重新打开弹窗/设置页都能拿到「重启应用」提示 */
+/** 内联「立即更新」回调：下载安装完成后按钮旁换成「重启应用」入口。
+ *  即便用户中途收起弹窗（窗口只是隐藏），Rust 侧下载仍会继续完成 */
 async function installFromPopup() {
   await downloadAndInstall();
-  if (updatePhase.value === "ready") {
-    notify("success", t("settings.installedRestart"), {
-      duration: 0,
-      actions: [{ label: t("settings.restart"), onClick: () => void restartApp() }],
-    });
-  } else if (updatePhase.value === "error") {
-    notify("error", t("settings.updateInstallFailed"), { description: errorMessage.value });
-  }
 }
+
+/** 下载中的内联进度文字：已下载 / 总大小（总大小拿不到时只显示已下载） */
+const downloadLabel = computed(() => {
+  const p = downloadProgress.value;
+  const total = p.total ? ` / ${formatMB(p.total)} MB` : "";
+  return t("settings.downloading", { progress: `${formatMB(p.downloaded)} MB${total}` });
+});
 
 /** 在系统终端里打开项目目录（图标按钮触发）。
  *  成功不打扰：终端窗口弹起本身就是反馈，失败才提示原因 */
@@ -263,19 +250,56 @@ onBeforeUnmount(() => {
       </OverlayScrollbar>
 
       <footer class="flex items-center gap-1 border-t border-default px-3 py-2">
-        <!-- 左下角检测更新：入口常驻，点击按当前通道检测并 toast 反馈 -->
-        <UButton
-          size="sm"
-          color="neutral"
-          variant="ghost"
-          icon="i-lucide-refresh-cw"
-          class="mr-auto"
-          :loading="updatePhase === 'checking'"
-          :aria-label="t('tray.checkUpdate')"
-          @click="checkUpdateFromPopup"
-        >
-          {{ t("tray.checkUpdate") }}
-        </UButton>
+        <!-- 左下角检测更新 + 内联结果：不用 toast（独立 webview 里不可靠），
+             检测完成后状态文字直接显示在按钮右侧；文字颜色按语义区分——
+             常态 muted、新版本 primary、失败 error，均随明暗主题自动适配 -->
+        <div class="mr-auto flex min-w-0 items-center gap-2">
+          <UButton
+            size="sm"
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-refresh-cw"
+            class="shrink-0"
+            :loading="updatePhase === 'checking'"
+            :aria-label="t('tray.checkUpdate')"
+            @click="checkUpdateFromPopup"
+          >
+            {{ t("tray.checkUpdate") }}
+          </UButton>
+          <span v-if="updatePhase === 'latest'" class="truncate text-xs text-muted">
+            {{ t("settings.upToDate") }}
+          </span>
+          <template v-else-if="updatePhase === 'available'">
+            <span class="truncate text-xs text-primary">
+              {{ t("settings.newVersionFound", { version: newVersion }) }}
+            </span>
+            <UButton
+              size="xs"
+              color="primary"
+              variant="soft"
+              class="shrink-0"
+              @click="installFromPopup"
+            >
+              {{ t("settings.updateNow") }}
+            </UButton>
+          </template>
+          <span v-else-if="updatePhase === 'downloading'" class="truncate text-xs text-muted">
+            {{ downloadLabel }}
+          </span>
+          <UButton
+            v-else-if="updatePhase === 'ready'"
+            size="xs"
+            color="primary"
+            variant="soft"
+            class="shrink-0"
+            @click="restartApp"
+          >
+            {{ t("settings.restart") }}
+          </UButton>
+          <span v-else-if="updatePhase === 'error'" class="truncate text-xs text-error">
+            {{ t("settings.updateCheckFailed") }}
+          </span>
+        </div>
         <UButton
           size="sm"
           color="neutral"

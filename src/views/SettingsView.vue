@@ -793,26 +793,34 @@ export default { name: "SettingsView" };
           <p class="font-medium">{{ t("settings.aboutSection") }}</p>
         </template>
         <div class="flex items-center justify-between gap-4">
-          <div>
+          <!-- 左侧标题与说明：min-w-0 防止长描述把右侧控件组挤出界 -->
+          <div class="min-w-0">
             <p class="text-sm font-medium">{{ t("settings.currentVersion") }}</p>
             <p class="mt-0.5 text-xs text-muted">{{ t("settings.currentVersionDesc") }}</p>
           </div>
-          <div class="flex items-center gap-3">
+          <div class="flex shrink-0 items-center gap-2.5">
+            <!-- 版本徽章：等宽字体 + 浅底圆角，替代裸文本（v 前缀更易读） -->
+            <span
+              class="rounded-md bg-elevated px-2 py-1 font-mono text-xs text-dimmed"
+              :title="t('settings.currentVersion')"
+            >
+              v{{ currentVersion || "—" }}
+            </span>
             <!-- 更新通道：切换即清空旧检测结果，需重新检测 -->
             <USelect
               :model-value="updateChannel"
               :items="updateChannelItems"
               size="sm"
-              class="w-32 shrink-0"
+              class="w-28 shrink-0"
               :aria-label="t('settings.updateChannel')"
               @update:model-value="setChannel($event as UpdateChannel)"
             />
-            <!-- 版本号来自 tauri.conf.json，等宽数字更整齐 -->
-            <span class="font-mono text-sm text-dimmed">{{ currentVersion || "—" }}</span>
+            <!-- whitespace-nowrap：英文文案较长，禁止折行成两行按钮 -->
             <UButton
               size="sm"
               variant="soft"
               icon="i-lucide-refresh-cw"
+              class="shrink-0 whitespace-nowrap"
               :loading="isChecking"
               :aria-label="t('settings.checkUpdate')"
               @click="handleCheckUpdate"

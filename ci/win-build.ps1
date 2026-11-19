@@ -84,6 +84,32 @@ if ($env:TAURI_SIGNING_PRIVATE_KEY) {
 }
 
 $HasNsis = $false
+
+<#
+.SYNOPSIS
+    修复被安全软件"疫苗化"的打包工具目录，返回是否值得重试。
+.DESCRIPTION
+    节点上的杀软会把未签名的 makensis.exe / candle.exe 截断或拦截（典型表现：
+    文件只剩几 KB、启动报 0xC0000135 STATUS_DLL_NOT_FOUND）。两种修复手段：
+    1. 主程序被截断 → 删除整个工具目录，tauri 下次构建会重新下载干净副本；
+    2. 文件完整但启动被拦 → 大概率是 MOTW（Zone.Identifier 下载标记），
+       递归解除后重试。
+#>
+function Repair-ToolDir {
+    param([string]$ToolDir, [string]$MainExe, [int]$MinSize)
+    $Exe = Join-Path $ToolDir $MainExe
+    if (-not (Test-Path $Exe)) { return $false }
+    if ((Get-Item $Exe).Length -lt $MinSize) {
+        Write-Host "检测到 $MainExe 被截断（疫苗化），删除 $ToolDir 强制重新下载..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $ToolDir -ErrorAction SilentlyContinue
+        return $true
+    }
+    Write-Host "解除 $ToolDir 的 MOTW 标记后重试..." -ForegroundColor Yellow
+    Get-ChildItem $ToolDir -Recurse -File -ErrorAction SilentlyContinue |
+        Unblock-File -ErrorAction SilentlyContinue
+    return $true
+}
+
 pnpm exec tauri build --bundles nsis $UpdaterConfig
 if ($LASTEXITCODE -eq 0) {
     $HasNsis = $true
@@ -104,8 +130,15 @@ if ($LASTEXITCODE -eq 0) {
     } else {
         Write-Host "  NSIS 工具目录不存在: $NsisToolDir"
     }
-    Write-Host "WARN: 跳过 nsis 安装包。若需恢复安装包产物，请在构建机安全软件中" -ForegroundColor Yellow
-    Write-Host "      把 $env:LOCALAPPDATA\tauri 目录加入信任/白名单。" -ForegroundColor Yellow
+    # 自修复重试：截断 → 删目录让 tauri 重新下载；MOTW → 解除标记
+    if (Repair-ToolDir -ToolDir $NsisToolDir -MainExe "makensis.exe" -MinSize 100KB) {
+        pnpm exec tauri build --bundles nsis $UpdaterConfig
+        if ($LASTEXITCODE -eq 0) { $HasNsis = $true }
+    }
+    if (-not $HasNsis) {
+        Write-Host "WARN: 跳过 nsis 安装包。若需恢复安装包产物，请在构建机安全软件中" -ForegroundColor Yellow
+        Write-Host "      把 $env:LOCALAPPDATA\tauri 目录加入信任/白名单。" -ForegroundColor Yellow
+    }
 }
 
 $HasMsi = $false
@@ -113,7 +146,17 @@ pnpm exec tauri build --bundles msi
 if ($LASTEXITCODE -eq 0) {
     $HasMsi = $true
 } else {
-    Write-Host "WARN: msi 打包失败（WiX candle 被安全软件拦截？），跳过 msi" -ForegroundColor Yellow
+    # WiX 目录名随 tauri 版本变化（WixTools / WixTools314），通配查找
+    $WixToolDir = Get-ChildItem (Join-Path $env:LOCALAPPDATA "tauri") -Directory -Filter "WixTools*" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    Write-Host "WARN: msi 打包失败（WiX candle 被安全软件拦截？），尝试修复重试" -ForegroundColor Yellow
+    if ($WixToolDir -and (Repair-ToolDir -ToolDir $WixToolDir.FullName -MainExe "candle.exe" -MinSize 1MB)) {
+        pnpm exec tauri build --bundles msi
+        if ($LASTEXITCODE -eq 0) { $HasMsi = $true }
+    }
+    if (-not $HasMsi) {
+        Write-Host "WARN: 跳过 msi（面向企业部署场景，应用内更新走 nsis，不受影响）" -ForegroundColor Yellow
+    }
 }
 
 # ---------- 4. 收集产物（zip 兜底，保证至少一件） ----------

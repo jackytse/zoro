@@ -155,6 +155,10 @@ finalize_updater_manifest() {
   # ---- 4.1 下载本 release 全部附件里的 .sig 签名文件 ----
   local SIG_DIR
   SIG_DIR="$(mktemp -d)"
+  # Windows git-bash：node.exe 是原生程序，会把 POSIX 路径 /tmp/... 解析成
+  # C:\tmp\...（与 git-bash 的 /tmp 不是同一目录）；统一转成 C:/ 形式，
+  # git-bash 工具链（curl/cp/git）同样接受该形式，三端通用
+  command -v cygpath >/dev/null 2>&1 && SIG_DIR="$(cygpath -m "$SIG_DIR")"
   local sig_assets
   code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$RELEASE_API/$RELEASE_ID")"
   if [[ ! "$code" =~ ^2 ]]; then
@@ -171,8 +175,9 @@ finalize_updater_manifest() {
   local count=0
   while IFS= read -r p; do
     [[ -z "$p" ]] && continue
-    # 附件下载走 api.cnb.cool 域名（响应里给的就是该域名），需带鉴权头
-    if curl -s -o "$SIG_DIR/$(basename "$p")" -w '%{http_code}' -H "$AUTH_HEADER" \
+    # 附件下载走 api.cnb.cool 域名（响应里给的就是该域名），需带鉴权头；
+    # -L 跟随重定向：该接口会 302 跳到 asset.cnb.cool 的预签名地址
+    if curl -sL -o "$SIG_DIR/$(basename "$p")" -w '%{http_code}' -H "$AUTH_HEADER" \
         "$API_BASE$p" | grep -q '^2'; then
       count=$((count + 1))
     fi
@@ -193,7 +198,9 @@ finalize_updater_manifest() {
     const fs = require("fs");
     const dir = process.argv[1], tag = process.argv[2], slug = process.argv[3];
     const base = "https://cnb.cool/" + slug + "/-/releases/download/" + tag;
-    const sig = (name) => fs.readFileSync(dir + "/" + name + ".sig", "utf8").trim();
+    // 只下载过 .sig 签名，包本体不在临时目录——所以从签名文件名反推包名
+    // （tauri 的签名文件就是包文件名 + ".sig"），再按平台后缀归类
+    const sigs = fs.readdirSync(dir).filter((f) => f.endsWith(".sig"));
     // Linux 唯一支持应用内更新的 bundle 是 AppImage；mac 是 .app.tar.gz；
     // Windows 是 NSIS setup.exe（msi 面向企业部署，不进更新链路）
     const candidates = [
@@ -203,10 +210,15 @@ finalize_updater_manifest() {
     ];
     const platforms = {};
     for (const [platform, suffix] of candidates) {
-      const name = fs.readdirSync(dir)
-        .filter((f) => f.endsWith(suffix) && !f.endsWith(".sig") && fs.existsSync(dir + "/" + f + ".sig"))
-        .sort((a, b) => b.length - a.length)[0]; // 防前缀混淆：取最长匹配
-      if (name) platforms[platform] = { signature: sig(name), url: base + "/" + name };
+      // 包名 = 签名文件名去掉 .sig 后缀；防前缀混淆取最长匹配
+      const pkg = sigs
+        .map((s) => s.slice(0, -".sig".length))
+        .filter((n) => n.endsWith(suffix))
+        .sort((a, b) => b.length - a.length)[0];
+      if (pkg) platforms[platform] = {
+        signature: fs.readFileSync(dir + "/" + pkg + ".sig", "utf8").trim(),
+        url: base + "/" + pkg,
+      };
     }
     const version = tag.replace(/^v/, "");
     const meta = {

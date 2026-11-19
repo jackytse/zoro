@@ -19,8 +19,8 @@
 #     更新包的 .sig 签名，按通道生成更新清单并 force push 到仓库 updater 分支
 #     ——应用内 updater 分「正式版 / 预发布」双通道（见 src-tauri/src/updater.rs），
 #     端点分别为
-#     https://cnb.cool/<repo>/-/raw/updater/latest.json（正式版）
-#     https://cnb.cool/<repo>/-/raw/updater/latest-beta.json（预发布）。
+#     https://cnb.cool/<repo>/-/git/raw/updater/latest.json（正式版）
+#     https://cnb.cool/<repo>/-/git/raw/updater/latest-beta.json（预发布）。
 #     三平台流水线并行，谁最后完成谁写入最全的清单；单平台失败时清单里
 #     缺该平台条目，对应平台用户表现为「无更新」，不影响其他平台升级。
 set -euo pipefail
@@ -274,8 +274,8 @@ finalize_updater_manifest() {
     git push -q --force "$push_url" HEAD:refs/heads/updater
   ) 2>/dev/null; then
     echo "✓ 更新清单已发布:"
-    echo "    正式版: https://cnb.cool/$REPO_SLUG/-/raw/updater/latest.json"
-    echo "    预发布: https://cnb.cool/$REPO_SLUG/-/raw/updater/latest-beta.json"
+    echo "    正式版: https://cnb.cool/$REPO_SLUG/-/git/raw/updater/latest.json"
+    echo "    预发布: https://cnb.cool/$REPO_SLUG/-/git/raw/updater/latest-beta.json"
   else
     echo "WARN: updater 分支推送失败（清单保留在 $SIG_DIR，可手动检查）" >&2
     return 0

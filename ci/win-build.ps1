@@ -74,10 +74,11 @@ Write-Host ("编译耗时: {0}s" -f ([int]([DateTime]::Now - $StartAt).TotalSeco
 #      bundle 名吞掉（invalid value ... for '--bundles'）；
 #   2. PS 5.1 向原生命令传含双引号的参数有引号转义坑，JSON 内嵌引号会被
 #      拼坏；文件路径无空格无引号，天然安全。
-$UpdaterConfig = ""
+# 注意：--config 与路径必须作为两个独立参数传（不能用
+# $UpdaterConfig = "--config xxx" 拼接——PS 5.1 会把含空格的字符串变量当作
+# 单个参数加引号传给原生命令，tauri 收到 flag 与值粘连的参数直接报错）。
 if ($env:TAURI_SIGNING_PRIVATE_KEY) {
     Set-Content -Path .tauri-updater-config.json -Value '{"bundle":{"createUpdaterArtifacts":true}}' -Encoding ascii
-    $UpdaterConfig = "--config .tauri-updater-config.json"
     Write-Host "检测到签名密钥，开启应用内更新产物"
 } else {
     Write-Host "未配置 TAURI_SIGNING_PRIVATE_KEY，跳过更新包签名（应用内更新将无 Windows 条目）"
@@ -110,7 +111,11 @@ function Repair-ToolDir {
     return $true
 }
 
-pnpm exec tauri build --bundles nsis $UpdaterConfig
+if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+    pnpm exec tauri build --bundles nsis --config .tauri-updater-config.json
+} else {
+    pnpm exec tauri build --bundles nsis
+}
 if ($LASTEXITCODE -eq 0) {
     $HasNsis = $true
 } else {
@@ -132,7 +137,11 @@ if ($LASTEXITCODE -eq 0) {
     }
     # 自修复重试：截断 → 删目录让 tauri 重新下载；MOTW → 解除标记
     if (Repair-ToolDir -ToolDir $NsisToolDir -MainExe "makensis.exe" -MinSize 100KB) {
-        pnpm exec tauri build --bundles nsis $UpdaterConfig
+        if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+            pnpm exec tauri build --bundles nsis --config .tauri-updater-config.json
+        } else {
+            pnpm exec tauri build --bundles nsis
+        }
         if ($LASTEXITCODE -eq 0) { $HasNsis = $true }
     }
     if (-not $HasNsis) {

@@ -2,8 +2,8 @@
 //!
 //! 更新通道分「正式版 stable」与「预发布 beta」，两个通道各对应更新源
 //! 孤儿分支（updater）上的一份独立清单：
-//!   - stable → https://cnb.cool/jackytse/zoro/-/raw/updater/latest.json
-//!   - beta   → https://cnb.cool/jackytse/zoro/-/raw/updater/latest-beta.json
+//!   - stable → https://cnb.cool/jackytse/zoro/-/git/raw/updater/latest.json
+//!   - beta   → https://cnb.cool/jackytse/zoro/-/git/raw/updater/latest-beta.json
 //!
 //! 为什么不用 JS 端 @tauri-apps/plugin-updater 的 check()：它只能用
 //! tauri.conf.json 里配置的固定端点，无法按用户选择的通道切换清单文件。
@@ -43,7 +43,7 @@ fn channel_endpoint(channel: &str) -> Result<url::Url, String> {
   } else {
     "latest.json"
   };
-  format!("https://cnb.cool/jackytse/zoro/-/raw/updater/{file}")
+  format!("https://cnb.cool/jackytse/zoro/-/git/raw/updater/{file}")
     .parse()
     .map_err(|e| format!("更新端点 URL 无效: {e}"))
 }

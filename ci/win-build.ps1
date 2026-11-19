@@ -28,6 +28,12 @@ $NodeDir = Get-ChildItem $NodeHome -Directory -Filter "node-v*-win-x64" -ErrorAc
     Sort-Object Name -Descending | Select-Object -First 1
 $ExtraPaths = @("$env:USERPROFILE\.cargo\bin") + @($NodeDir.FullName)
 $env:PATH = (($ExtraPaths | Where-Object { $_ }) -join ";") + ";$env:PATH"
+# 用户级持久 PATH（注册表）也要合并：stage 之间是新进程，但它们是 runner
+# 主进程的子进程，只继承主进程启动时的环境快照——setup 阶段通过注册表写入
+# 的用户 PATH（如 pnpm 所在的 npm 全局 prefix）不会出现在本进程环境里，
+# 只能在这里显式读出来追加。追加到末尾，避免覆盖前面显式补齐的优先目录
+$UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+if ($UserPath) { $env:PATH = "$env:PATH;$UserPath" }
 Write-Host "node: $(node -v)"
 
 # 与 Mac 节点同理：宿主 USERPROFILE 持久，把 release 编译产物放在固定目录，

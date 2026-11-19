@@ -118,6 +118,17 @@ function Repair-ToolDir {
         Remove-Item -Recurse -Force $ToolDir -ErrorAction SilentlyContinue
         return $true
     }
+    # NSIS 的运行时资源在独立目录（tauri\share\nsis\Stubs 等）：stub 文件无
+    # 扩展名，是杀软的重点误删对象（v0.1.9 实测 makensis.exe 完整但 Stubs
+    # 目录整个被删，报 reading stub zlib-amd64-unicode）。目录缺失时把
+    # NSIS 本体与 share 一起删掉，tauri 会重新下载完整副本。
+    $StubsDir = Join-Path $env:LOCALAPPDATA "tauri\share\nsis\Stubs"
+    if ($MainExe -eq "makensis.exe" -and -not (Test-Path (Join-Path $StubsDir "*"))) {
+        Write-Host "检测到 NSIS Stubs 目录缺失（杀软误删），删除工具目录强制重新下载..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $ToolDir -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force (Join-Path $env:LOCALAPPDATA "tauri\share\nsis") -ErrorAction SilentlyContinue
+        return $true
+    }
     Write-Host "解除 $ToolDir 的 MOTW 标记后重试..." -ForegroundColor Yellow
     Get-ChildItem $ToolDir -Recurse -File -ErrorAction SilentlyContinue |
         Unblock-File -ErrorAction SilentlyContinue
@@ -142,8 +153,14 @@ if ($LASTEXITCODE -eq 0) {
             ForEach-Object { Write-Host ("  {0}  {1} bytes" -f $_.Name, $_.Length) }
         $Makensis = Join-Path $NsisToolDir "makensis.exe"
         if (Test-Path $Makensis) {
+            # 注意：脚本头部 ErrorActionPreference=Stop 时，PS 5.1 会把管道里
+            # 的原生 stderr 记录（2>&1）当终止错误，直接杀死脚本（v0.1.9 实测
+            # 死在诊断行，msi/zip 兜底全没跑）。这里临时降到 Continue 执行。
+            $EapBak = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
             & $Makensis -VERSION 2>&1 | ForEach-Object { Write-Host "  $_" } | Out-Null
             Write-Host ("  直接调用 makensis -VERSION 退出码: {0}（-1073741515 = 0xC0000135 加载被拦）" -f $LASTEXITCODE)
+            $ErrorActionPreference = $EapBak
         }
     } else {
         Write-Host "  NSIS 工具目录不存在: $NsisToolDir"
@@ -300,11 +317,17 @@ if ($Ref -like "v*") {
         if (Test-Path $SigPath) { $UploadFiles += $SigPath }
     }
     # 显式合并 stderr 并回显：CI 日志对 bash 子进程的 stderr 捕获不可靠，
-    # 上传失败时若不捕获 2>&1，报错会被吞掉只剩一句 FAIL
+    # 上传失败时若不捕获 2>&1，报错会被吞掉只剩一句 FAIL。
+    # 2>&1 在 EAP=Stop 下会把 stderr 记录变终止错误（同 makensis 诊断的坑），
+    # 临时降到 Continue。
+    $EapBak = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $BashOutput = & $BashExe ci/upload-release.sh @UploadFiles 2>&1
+    $BashExit = $LASTEXITCODE
+    $ErrorActionPreference = $EapBak
     $BashOutput | ForEach-Object { Write-Host "$_" }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host ("== FAIL: release 上传失败（bash exit={0}）" -f $LASTEXITCODE) -ForegroundColor Red
+    if ($BashExit -ne 0) {
+        Write-Host ("== FAIL: release 上传失败（bash exit={0}）" -f $BashExit) -ForegroundColor Red
         exit 1
     }
 } else {

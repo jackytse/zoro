@@ -820,26 +820,8 @@ export default { name: "SettingsView" };
             </UButton>
           </div>
         </div>
-        <!-- 通道行：独立成行，切换即清空旧检测结果，需重新检测 -->
-        <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
-          <div class="min-w-0">
-            <p class="text-sm font-medium">{{ t("settings.updateChannel") }}</p>
-            <p class="mt-0.5 text-xs text-muted">{{ t("settings.updateChannelDesc") }}</p>
-          </div>
-          <USelect
-            :model-value="updateChannel"
-            :items="updateChannelItems"
-            size="sm"
-            class="w-32 shrink-0"
-            :aria-label="t('settings.updateChannel')"
-            @update:model-value="setChannel($event as UpdateChannel)"
-          />
-        </div>
-        <!-- 动态状态行：检测/下载/出错后的结果与后续动作 -->
-        <div
-          v-if="updateStatusText"
-          class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6"
-        >
+        <!-- 动态状态行：紧跟版本行（不放到卡片最底部），检测/下载/出错后的结果与后续动作 -->
+        <div v-if="updateStatusText" class="mt-4 flex items-center justify-between gap-4">
           <div class="flex min-w-0 items-center gap-2">
             <UIcon :name="updateStatusIcon" class="size-4 shrink-0" :class="updateStatusClass" />
             <!-- 错误信息可能很长：截断展示，完整原因在 toast 里 -->
@@ -861,6 +843,21 @@ export default { name: "SettingsView" };
           >
             {{ t("settings.restart") }}
           </UButton>
+        </div>
+        <!-- 通道行：独立成行，切换即清空旧检测结果，需重新检测 -->
+        <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
+          <div class="min-w-0">
+            <p class="text-sm font-medium">{{ t("settings.updateChannel") }}</p>
+            <p class="mt-0.5 text-xs text-muted">{{ t("settings.updateChannelDesc") }}</p>
+          </div>
+          <USelect
+            :model-value="updateChannel"
+            :items="updateChannelItems"
+            size="sm"
+            class="w-32 shrink-0"
+            :aria-label="t('settings.updateChannel')"
+            @update:model-value="setChannel($event as UpdateChannel)"
+          />
         </div>
       </UCard>
     </template>

@@ -146,5 +146,6 @@ export default {
     restart: "Restart app",
     updateCheckFailed: "Failed to check for updates",
     updateInstallFailed: "Failed to download or install the update",
+    updateSourceUnavailable: "Update source unavailable: no release with an update manifest yet (updates are hosted on GitHub Releases)",
   },
 } as const;

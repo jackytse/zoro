@@ -142,5 +142,6 @@ export default {
     restart: "重啟應用",
     updateCheckFailed: "檢測更新失敗",
     updateInstallFailed: "下載或安裝更新失敗",
+    updateSourceUnavailable: "更新源暫不可用：還沒有包含更新清單的正式發布（更新包由 GitHub Release 託管）",
   },
 } as const;

@@ -498,7 +498,12 @@ const updateStatusText = computed<string | null>(() => {
     case "ready":
       return t("settings.installedRestart");
     case "error":
-      return updateError.value;
+      // updater 原始报错很技术化；最常见的「端点 404 / 没有 release」
+      // （Could not fetch a valid release JSON）翻译成用户能懂的说法，
+      // 其余错误原样展示，完整信息仍在 toast 的 description 里
+      return updateError.value.includes("Could not fetch")
+        ? t("settings.updateSourceUnavailable")
+        : updateError.value;
     default:
       return null;
   }

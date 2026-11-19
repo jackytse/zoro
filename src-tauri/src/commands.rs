@@ -22,8 +22,16 @@ pub fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
 /// 避免阻塞 UI 主线程。
 #[tauri::command]
 pub fn scan_recent_projects(
+  app: AppHandle,
   state: State<'_, AppState>,
 ) -> Result<Vec<DetectedProject>, String> {
+  // importer 的数据源（~/Library/...）全部是 macOS 路径，Windows / Linux 上
+  // 即使拿到主目录也扫不到东西。这些平台返回空列表而不是 Err——「没有可导入项」
+  // 是正常的，不该让整个扫描命令失败并弹「扫描失败」。
+  if cfg!(not(target_os = "macos")) {
+    return Ok(Vec::new());
+  }
+
   // 快照已配置的（路径, 工具）对，供 importer 过滤重复
   let existing = {
     let cfg = state.config.lock().unwrap();
@@ -33,8 +41,12 @@ pub fn scan_recent_projects(
       .map(|p| (p.path.clone(), p.tool_id.clone()))
       .collect::<Vec<_>>()
   };
-  let home = std::env::var("HOME").map_err(|_| "无法获取用户主目录".to_string())?;
-  Ok(importer::scan(std::path::Path::new(&home), &existing))
+  // 主目录交给 Tauri 按平台解析，避免硬编码依赖 HOME 环境变量。
+  let home = app
+    .path()
+    .home_dir()
+    .map_err(|e| format!("无法获取用户主目录：{e}"))?;
+  Ok(importer::scan(&home, &existing))
 }
 
 /// 新增一条项目记录。
@@ -199,8 +211,11 @@ pub fn open_project(
   Ok(snapshot)
 }
 
-/// 设置开机自动启动。enable() / disable() 均为幂等操作；
-/// 配置先行落盘，系统注册失败时回滚并抛错给前端 toast。
+/// 设置开机自动启动。enable() / disable() 均为幂等操作。
+///
+/// 事务顺序：单次持锁读出旧值并写入新值、clone 出快照后立即释放锁 →
+/// 锁外调用系统 API → 落盘。系统 API 失败或落盘失败时都把内存回滚到旧值，
+/// 并尽量把系统自启状态也还原，保证「内存 / 磁盘 / 系统」三者一致。
 #[tauri::command]
 pub fn set_autostart(
   app: AppHandle,
@@ -209,8 +224,13 @@ pub fn set_autostart(
 ) -> Result<Config, String> {
   use tauri_plugin_autostart::ManagerExt as _;
 
-  let previous = state.config.lock().unwrap().autostart;
-  state.config.lock().unwrap().autostart = enabled;
+  // 单次持锁完成读-改-写并 clone 快照；锁内不含任何系统 API / IO
+  let (previous, snapshot) = {
+    let mut cfg = state.config.lock().unwrap();
+    let previous = cfg.autostart;
+    cfg.autostart = enabled;
+    (previous, cfg.clone())
+  };
 
   let result = if enabled {
     app.autolaunch().enable()
@@ -222,9 +242,21 @@ pub fn set_autostart(
     return Err(format!("设置开机自启失败：{err}"));
   }
 
-  config::save(&state)?;
+  if let Err(err) = config::save(&state) {
+    // 落盘失败：先回滚内存，再尽量还原系统自启状态（幂等，best-effort）
+    state.config.lock().unwrap().autostart = previous;
+    let revert = if previous {
+      app.autolaunch().enable()
+    } else {
+      app.autolaunch().disable()
+    };
+    if let Err(e) = revert {
+      log::warn!("开机自启落盘失败后还原系统状态也失败：{e}");
+    }
+    return Err(err);
+  }
   broadcast(&app);
-  Ok(state.config.lock().unwrap().clone())
+  Ok(snapshot)
 }
 
 /// 设置全局快捷键。
@@ -232,25 +264,38 @@ pub fn set_autostart(
 /// - `Some("")`：禁用；
 /// - `Some(组合)`：自定义，如 "Super+Shift+P"（global-hotkey 解析格式）。
 ///
-/// 注册成功才算生效；失败时配置回滚并把原因抛给前端 toast。
+/// 注册成功才算生效；系统注册失败或落盘失败时都把配置回滚到旧值，
+/// 并把原因抛给前端 toast。
 #[tauri::command]
 pub fn set_global_shortcut(
   app: AppHandle,
   state: State<'_, AppState>,
   shortcut: Option<String>,
 ) -> Result<Config, String> {
-  let previous = state.config.lock().unwrap().global_shortcut.clone();
-  state.config.lock().unwrap().global_shortcut = shortcut;
+  // 单次持锁完成读-改-写并 clone 快照；apply() 会读 config，必须在锁外调用
+  let (previous, snapshot) = {
+    let mut cfg = state.config.lock().unwrap();
+    let previous = cfg.global_shortcut.clone();
+    cfg.global_shortcut = shortcut;
+    (previous, cfg.clone())
+  };
 
   if let Err(err) = crate::shortcut::apply(&app) {
-    // 回滚配置并恢复旧注册（apply 内部已尽量恢复旧组合）
+    // apply 内部已尽量恢复旧注册，这里回滚配置保持两者一致
     state.config.lock().unwrap().global_shortcut = previous;
     return Err(err);
   }
 
-  config::save(&state)?;
+  if let Err(err) = config::save(&state) {
+    // 落盘失败：回滚内存并重新注册旧组合（best-effort，apply 读回滚后的 config）
+    state.config.lock().unwrap().global_shortcut = previous;
+    if let Err(e) = crate::shortcut::apply(&app) {
+      log::warn!("快捷键落盘失败后恢复旧注册也失败：{e}");
+    }
+    return Err(err);
+  }
   broadcast(&app);
-  Ok(state.config.lock().unwrap().clone())
+  Ok(snapshot)
 }
 
 /// 显示并聚焦主窗口（弹窗底部的「设置」入口）。
@@ -300,13 +345,12 @@ pub fn set_terminal_tool(
       return Err(format!("不支持的终端工具：{t}"));
     }
   }
-  {
-    let mut cfg = state.config.lock().unwrap();
-    cfg.terminal_tool = tool;
-  }
-  config::save(&state)?;
-  broadcast(&app);
-  Ok(state.config.lock().unwrap().clone())
+  set_config_field(
+    &app,
+    &state,
+    |cfg| std::mem::replace(&mut cfg.terminal_tool, tool),
+    |cfg, old| cfg.terminal_tool = old,
+  )
 }
 
 /// 设置终端打开方式："window"（新窗口，默认）或 "tab"（新选项卡）。
@@ -324,13 +368,12 @@ pub fn set_terminal_mode(
     "tab" | "existing" => "tab",
     _ => return Err(format!("不支持的终端打开方式：{mode}")),
   };
-  {
-    let mut cfg = state.config.lock().unwrap();
-    cfg.terminal_open_mode = Some(normalized.to_string());
-  }
-  config::save(&state)?;
-  broadcast(&app);
-  Ok(state.config.lock().unwrap().clone())
+  set_config_field(
+    &app,
+    &state,
+    |cfg| std::mem::replace(&mut cfg.terminal_open_mode, Some(normalized.to_string())),
+    |cfg, old| cfg.terminal_open_mode = old,
+  )
 }
 
 /// 设置界面主题："light" / "dark"，None = 跟随系统。
@@ -347,13 +390,12 @@ pub fn set_theme(
       return Err(format!("不支持的主题：{t}"));
     }
   }
-  {
-    let mut cfg = state.config.lock().unwrap();
-    cfg.theme = theme;
-  }
-  config::save(&state)?;
-  broadcast(&app);
-  Ok(state.config.lock().unwrap().clone())
+  set_config_field(
+    &app,
+    &state,
+    |cfg| std::mem::replace(&mut cfg.theme, theme),
+    |cfg, old| cfg.theme = old,
+  )
 }
 
 /// 设置界面语言："zh-CN" / "zh-TW" / "en"，None = 跟随系统语言。
@@ -370,15 +412,21 @@ pub fn set_locale(
       return Err(format!("不支持的语言：{l}"));
     }
   }
-  {
+  // 单次持锁完成读-改-写并 clone 快照
+  let (previous, snapshot) = {
     let mut cfg = state.config.lock().unwrap();
+    let previous = cfg.locale.clone();
     cfg.locale = locale;
+    (previous, cfg.clone())
+  };
+  if let Err(err) = config::save(&state) {
+    state.config.lock().unwrap().locale = previous;
+    return Err(err);
   }
-  config::save(&state)?;
-  // 托盘菜单文案独立于前端，需要在这里同步重建
+  // 托盘菜单文案独立于前端，落盘成功后按新语言同步重建
   tray::refresh_tray_locale(&app);
   broadcast(&app);
-  Ok(state.config.lock().unwrap().clone())
+  Ok(snapshot)
 }
 
 /// 隐藏托盘弹窗（Esc 键 / 设置跳转时使用）。
@@ -428,6 +476,34 @@ pub fn open_url(url: String) -> Result<(), String> {
   result
     .map(|_| ())
     .map_err(|err| format!("打开浏览器失败：{err}"))
+}
+
+/// 提交一次纯配置字段变更。
+///
+/// 在**单次持锁**内完成「读旧值 → 写新值 → clone 落盘快照」，随后立即释放锁；
+/// `mutate` 返回被替换的旧值，落盘失败时 `rollback` 用它把字段恢复，避免
+/// 「内存已改、磁盘未写」的不一致。锁内不调用系统 API 或做 IO，杜绝死锁。
+fn set_config_field<T, F, R>(
+  app: &AppHandle,
+  state: &AppState,
+  mutate: F,
+  rollback: R,
+) -> Result<Config, String>
+where
+  F: FnOnce(&mut Config) -> T,
+  R: FnOnce(&mut Config, T),
+{
+  let (old, snapshot) = {
+    let mut cfg = state.config.lock().unwrap();
+    let old = mutate(&mut cfg);
+    (old, cfg.clone())
+  };
+  if let Err(err) = config::save(state) {
+    rollback(&mut state.config.lock().unwrap(), old);
+    return Err(err);
+  }
+  broadcast(app);
+  Ok(snapshot)
 }
 
 /// 向所有窗口广播配置变更事件。

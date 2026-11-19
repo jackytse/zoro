@@ -265,9 +265,12 @@ fn read_uris_from_storage_json(path: &Path) -> Vec<String> {
 /// 扫出的项目按产品目录名归类到对应工具（IntelliJIdea2026.3 → idea、
 /// Rider2026.1 → rider 等）；识别不了的产品回落到 idea。
 fn scan_jetbrains(base: &Path, existing: &[(String, String)], fallback_tool_id: &str) -> Vec<DetectedProject> {
-  let Ok(home) = std::env::var("HOME") else {
+  // $USER_HOME$ 宏展开需要主目录；统一走配置模块的跨平台辅助函数
+  // （HOME → USERPROFILE），Windows 上不再因缺少 HOME 而直接放弃扫描。
+  let Some(home) = crate::config::home_dir_from_env() else {
     return Vec::new();
   };
+  let home = home.to_string_lossy().into_owned();
   let Ok(entries) = std::fs::read_dir(base) else {
     return Vec::new();
   };
@@ -840,6 +843,40 @@ mod tests {
     assert!(found.iter().all(|p| p.tool_id == "zed"));
     // home 本身（blob 里出现过）不能被当成项目
     assert!(!found.iter().any(|p| p.path == tmp.to_string_lossy()));
+
+    std::fs::remove_dir_all(&tmp).unwrap();
+  }
+
+  /// 回归 🔴-1：旧实现在 >8192 字节的纯可打印段上用段内不存在的 `\n\r\t`
+  /// 递归切分，长度不收敛导致栈溢出、整个进程 abort。这里构造同类输入，
+  /// 验证新实现能正常返回且仍能提取出路径，不再崩溃。
+  #[test]
+  fn extracts_paths_from_oversized_printable_run() {
+    let tmp = std::env::temp_dir().join(format!("zoro-long-run-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let proj = tmp.join("long-proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    let home_str = tmp.to_string_lossy().into_owned();
+
+    // 用可打印 ASCII 填充出远超旧 8192 阈值的一段，中间嵌入真实存在的目录。
+    // needle 用系统路径分隔符，保证跨平台（Windows 的 \ 也是可打印 ASCII）。
+    let needle = proj.to_string_lossy().into_owned();
+    let mut blob = String::new();
+    blob.push_str(&"x".repeat(5000));
+    blob.push_str(&needle);
+    blob.push_str(&"y".repeat(5000));
+    assert!(blob.len() > 8192, "测试输入需超过旧的 8192 阈值");
+    assert!(
+      blob.bytes().all(|b| (0x20..=0x7e).contains(&b)),
+      "输入须全为可打印 ASCII，才能复现旧实现的切分失效"
+    );
+
+    // 旧实现在此处无限递归并栈溢出；新实现应正常返回并提取出路径
+    let found = extract_home_dir_paths(blob.as_bytes(), &home_str);
+    assert!(
+      found.iter().any(|p| p == &needle),
+      "超长可打印段中应仍能提取出已存在的目录：{found:?}"
+    );
 
     std::fs::remove_dir_all(&tmp).unwrap();
   }

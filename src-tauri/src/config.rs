@@ -465,20 +465,31 @@ impl Config {
   }
 }
 
-/// 展开路径里的 ~ 与 ~user 前缀（只处理当前用户的 ~）。
+/// 从环境变量获取用户主目录：优先 `HOME`（macOS / Linux），其次 `USERPROFILE`（Windows）。
+///
+/// 供没有 `AppHandle` 的纯函数使用（如 `expand_tilde`、`importer::scan_jetbrains`）。
+/// 在持有 `AppHandle` 的命令里应优先用 `app.path().home_dir()`——它由 Tauri 按平台
+/// 解析，比环境变量更可靠。
+pub fn home_dir_from_env() -> Option<PathBuf> {
+  std::env::var_os("HOME")
+    .or_else(|| std::env::var_os("USERPROFILE"))
+    .map(PathBuf::from)
+}
+
+/// 展开路径里的 ~ 前缀（只处理当前用户的 ~）。
 pub fn expand_tilde(path: &str) -> String {
+  let Some(home) = home_dir_from_env() else {
+    return path.to_string();
+  };
   if path == "~" {
-    if let Some(home) = std::env::var_os("HOME") {
-      return home.to_string_lossy().into_owned();
-    }
+    home.to_string_lossy().into_owned()
   } else if let Some(rest) = path.strip_prefix("~/") {
-    if let Some(home) = std::env::var_os("HOME") {
-      let mut joined = PathBuf::from(home);
-      joined.push(rest);
-      return joined.to_string_lossy().into_owned();
-    }
+    let mut joined = home;
+    joined.push(rest);
+    joined.to_string_lossy().into_owned()
+  } else {
+    path.to_string()
   }
-  path.to_string()
 }
 
 /// 从磁盘加载配置并构建 AppState；文件不存在或解析失败时落回默认值。

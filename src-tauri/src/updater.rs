@@ -76,16 +76,25 @@ pub async fn updater_check(
     .await
     .map_err(|e| e.to_string())?;
 
-  Ok(update.map(|u| {
-    let info = UpdateInfo {
-      version: u.version.clone(),
-      current_version: u.current_version.clone(),
-      notes: u.body.clone(),
-    };
-    // 同一时间只保留一个待安装更新：重复检测直接覆盖旧实例
-    *pending.0.lock().unwrap() = Some(u);
-    info
-  }))
+  // 检测结果与待安装对象必须严格一一对应：命中时写入新实例，
+  // 未命中（已是最新 / 清单回滚 / 切到无更新的通道）时清空上次残留的旧实例，
+  // 避免跨命令共享状态里留着过期通道的 Update。
+  match update {
+    Some(u) => {
+      let info = UpdateInfo {
+        version: u.version.clone(),
+        current_version: u.current_version.clone(),
+        notes: u.body.clone(),
+      };
+      // 同一时间只保留一个待安装更新：重复检测直接覆盖旧实例
+      *pending.0.lock().unwrap() = Some(u);
+      Ok(Some(info))
+    }
+    None => {
+      *pending.0.lock().unwrap() = None;
+      Ok(None)
+    }
+  }
 }
 
 /// 下载并安装待更新包：Windows NSIS 下载完静默安装，macOS 替换 .app，

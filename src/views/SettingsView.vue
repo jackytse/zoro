@@ -880,13 +880,14 @@ export default { name: "SettingsView" };
             <p class="mt-0.5 text-xs text-muted">{{ t("settings.sourceRepoDesc") }}</p>
           </div>
           <div class="flex shrink-0 items-center gap-2">
+            <!-- CNB 用官方风车 logo（brands.ts 内联 SVG），不宜用 lucide 通用图标替代 -->
             <UButton
               size="sm"
               color="neutral"
               variant="soft"
-              icon="i-lucide-cloud"
               @click="openRepo(REPO_CNB)"
             >
+              <ToolIcon tool-id="cnb" icon-class="size-4" />
               CNB
             </UButton>
             <UButton

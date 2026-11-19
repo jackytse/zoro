@@ -320,12 +320,24 @@ if ($Ref -like "v*") {
     # 上传失败时若不捕获 2>&1，报错会被吞掉只剩一句 FAIL。
     # 2>&1 在 EAP=Stop 下会把 stderr 记录变终止错误（同 makensis 诊断的坑），
     # 临时降到 Continue。
-    $EapBak = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $BashOutput = & $BashExe ci/upload-release.sh @UploadFiles 2>&1
-    $BashExit = $LASTEXITCODE
-    $ErrorActionPreference = $EapBak
-    $BashOutput | ForEach-Object { Write-Host "$_" }
+    # 节点 DNS 间歇性故障（v0.1.7/v0.1.9 实测 exit 6/35/11001），curl 内建
+    # --retry 只覆盖单次脚本内调用，这里再加外层整体重试：脚本幂等
+    # （release 已存在则复用、附件同名覆盖），重跑安全。
+    $BashExit = 1
+    for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
+        Write-Host ("== release 上传（第 {0}/3 次尝试） ==" -f $Attempt)
+        $EapBak = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $BashOutput = & $BashExe ci/upload-release.sh @UploadFiles 2>&1
+        $BashExit = $LASTEXITCODE
+        $ErrorActionPreference = $EapBak
+        $BashOutput | ForEach-Object { Write-Host "$_" }
+        if ($BashExit -eq 0) { break }
+        if ($Attempt -lt 3) {
+            Write-Host "上传失败（bash exit=$BashExit），30 秒后重试..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 30
+        }
+    }
     if ($BashExit -ne 0) {
         Write-Host ("== FAIL: release 上传失败（bash exit={0}）" -f $BashExit) -ForegroundColor Red
         exit 1

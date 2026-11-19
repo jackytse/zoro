@@ -42,7 +42,6 @@ export default {
 
     addProject: "Add Project",
     projectName: "Project name",
-    nameHint: "Leave empty to auto-fill from the path's last segment",
     namePlaceholder: "My project",
     tool: "Development tool",
     projectPath: "Project path",

@@ -43,7 +43,6 @@ export default {
     // 添加项目
     addProject: "添加项目",
     projectName: "项目名称",
-    nameHint: "留空时自动取路径末段作为项目名",
     namePlaceholder: "我的项目",
     tool: "开发工具",
     projectPath: "项目路径",

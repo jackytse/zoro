@@ -936,7 +936,7 @@ export default { name: "SettingsView" };
         </template>
         <form class="space-y-4" @submit.prevent="addProject">
           <div class="grid gap-4 sm:grid-cols-2">
-            <UFormField :label="t('settings.projectName')" :hint="t('settings.nameHint')">
+            <UFormField :label="t('settings.projectName')">
               <UInput v-model="form.name" :placeholder="t('settings.namePlaceholder')" class="w-full" />
             </UFormField>
             <UFormField :label="t('settings.tool')">

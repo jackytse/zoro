@@ -39,14 +39,17 @@ if [[ "$REF" == v* ]]; then
 fi
 
 # ---------- 2. 打包（.app + .dmg） ----------
-# 应用内自动更新：TAURI_SIGNING_PRIVATE_KEY（CNB 仓库环境变量）存在时通过
-# --config 覆盖开启 createUpdaterArtifacts——macOS 会在 macos bundle 目录
+# 应用内自动更新：TAURI_SIGNING_PRIVATE_KEY（CNB 密钥仓库 imports 注入）存在时
+# 通过 --config 覆盖开启 createUpdaterArtifacts——macOS 会在 macos bundle 目录
 # 额外产出 zoro.app.tar.gz（.app 的 tar 打包）与 .sig 签名，即应用内更新包。
 # 密钥未配置时不加覆盖，dmg/app.zip 链路照常（应用内更新无 macOS 条目）。
-# JSON 无空格可安全参与分词，故意不加引号展开（mac 自带 bash 3.2 兼容）。
+# 覆盖配置写成临时文件再传 --config <路径>：tauri CLI 的 --bundles 是变长参数，
+# 命令尾部追加内联 JSON 会被 --bundles 吞掉（v0.1.5 tag 流水线实测报
+# invalid value ... for '--bundles'）；文件路径无空格无引号，拼接安全。
 UPDATER_CONFIG=""
 if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
-  UPDATER_CONFIG='{"bundle":{"createUpdaterArtifacts":true}}'
+  echo '{"bundle":{"createUpdaterArtifacts":true}}' > .tauri-updater-config.json
+  UPDATER_CONFIG="--config .tauri-updater-config.json"
   echo "检测到签名密钥，开启应用内更新产物"
 else
   echo "未配置 TAURI_SIGNING_PRIVATE_KEY，跳过更新包签名（应用内更新将无 macOS 条目）"

@@ -37,14 +37,18 @@ if [[ "$REF" == v* ]]; then
 fi
 
 # ---------- 2. 打包 ----------
-# 应用内自动更新：TAURI_SIGNING_PRIVATE_KEY（CNB 仓库环境变量）存在时，
+# 应用内自动更新：TAURI_SIGNING_PRIVATE_KEY（CNB 密钥仓库 imports 注入）存在时，
 # 通过 --config 覆盖开启 createUpdaterArtifacts，让 tauri 产出带 minisign
 # 签名的更新包（Linux 更新包 = AppImage + .sig）。密钥未配置时不加覆盖，
 # 纯 deb 链路照常工作——本地构建也不需要签名密钥。
-# JSON 无空格可安全参与分词，故故意不加引号展开（bash 3.2/5.x 通用）。
+# 注意：覆盖配置必须写成临时文件再传 --config <路径>。不能在命令尾部追加
+# 内联 JSON——tauri CLI 的 --bundles 是变长参数，裸 JSON 会被它当作 bundle
+# 名吞掉（v0.1.5 tag 流水线实测报 invalid value ... for '--bundles'）；
+# 文件路径无空格无引号，三种 shell 拼接都安全。
 UPDATER_CONFIG=""
 if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
-  UPDATER_CONFIG='{"bundle":{"createUpdaterArtifacts":true}}'
+  echo '{"bundle":{"createUpdaterArtifacts":true}}' > .tauri-updater-config.json
+  UPDATER_CONFIG="--config .tauri-updater-config.json"
   echo "检测到签名密钥，开启应用内更新产物"
 else
   echo "未配置 TAURI_SIGNING_PRIVATE_KEY，跳过更新包签名（应用内更新将无 Linux 条目）"

@@ -66,13 +66,18 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ("编译耗时: {0}s" -f ([int]([DateTime]::Now - $StartAt).TotalSeconds))
 
 # ---------- 3. 安装包打包（尽力而为） ----------
-# 应用内自动更新：TAURI_SIGNING_PRIVATE_KEY（CNB 仓库环境变量）存在时，
+# 应用内自动更新：TAURI_SIGNING_PRIVATE_KEY（CNB 密钥仓库 imports 注入）存在时，
 # 给 nsis 打包追加 --config 覆盖开启 createUpdaterArtifacts——tauri 会在
 # setup.exe 旁产出 .sig 签名（Windows 更新链路用的就是 setup.exe）。
-# JSON 无空格可安全分词，直接拼进参数即可。
+# 覆盖配置必须写成临时 JSON 文件再传 --config <路径>，原因有二：
+#   1. tauri CLI 的 --bundles 是变长参数，命令尾部追加裸 JSON 会被它当作
+#      bundle 名吞掉（invalid value ... for '--bundles'）；
+#   2. PS 5.1 向原生命令传含双引号的参数有引号转义坑，JSON 内嵌引号会被
+#      拼坏；文件路径无空格无引号，天然安全。
 $UpdaterConfig = ""
 if ($env:TAURI_SIGNING_PRIVATE_KEY) {
-    $UpdaterConfig = '{"bundle":{"createUpdaterArtifacts":true}}'
+    Set-Content -Path .tauri-updater-config.json -Value '{"bundle":{"createUpdaterArtifacts":true}}' -Encoding ascii
+    $UpdaterConfig = "--config .tauri-updater-config.json"
     Write-Host "检测到签名密钥，开启应用内更新产物"
 } else {
     Write-Host "未配置 TAURI_SIGNING_PRIVATE_KEY，跳过更新包签名（应用内更新将无 Windows 条目）"

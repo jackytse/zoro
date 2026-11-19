@@ -45,3 +45,6 @@ components.d.ts
 # Tauri
 src-tauri/target
 src-tauri/gen
+
+# 构建脚本生成的 tauri 覆盖配置（开启 createUpdaterArtifacts 用，运行时产物）
+.tauri-updater-config.json

@@ -63,7 +63,7 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: check tag matches tauri.conf.json version
         if: startsWith(github.ref, 'refs/tags/')
@@ -79,13 +79,14 @@ jobs:
           fi
           echo "版本校验通过: v$TAG"
 
+      # v6 起跑在 Node 24 运行时，消除 actions 的 Node.js 20 deprecation 警告
       - name: install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
 
       - name: setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -194,7 +195,7 @@ jobs:
 
       - name: upload build artifacts (manual run only)
         if: "!startsWith(github.ref, 'refs/tags/')"
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: zoro-${{ matrix.os }}
           path: release-assets/*

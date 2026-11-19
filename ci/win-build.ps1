@@ -3,12 +3,14 @@
 # 运行环境：CNB 自建 Windows 节点（宿主机 PowerShell 直跑，无 docker）。
 #
 # 产物策略（按优先级，任何一项失败都不阻塞其余产物）：
-#   1. nsis setup.exe（Windows 通用安装器）——本节点因管家类安全软件
+#   1. nsis setup.exe（Windows 通用安装包）——本节点因管家类安全软件
 #      拦截未签名工具（makensis 被静默破坏：首次 0xC0000135 加载失败、
-#      重下后文件被截断成 2560 字节），经常失败；
-#   2. msi（企业部署场景，依赖 WiX candle，同样受杀软拦截）；
-#   3. 便携 zip（release 目录下的主程序 + 说明文件）——零工具链依赖，
+#      重下后文件被截断成 2560 字节），经常失败；自修复重试兜底；
+#   2. 便携 zip（release 目录下的主程序 + 说明文件）——零工具链依赖，
 #      只要 Rust 编译成功就必有，作为兜底交付物。
+#   3. msi 不在本节点打包：WiX candle.exe 会被杀软拦截挂死（v0.1.10 实测
+#      两次尝试挂死 4.5 + 9.7 分钟，全流程被拖到 ~18 分钟），GitHub Actions
+#      的 release 已稳定产出 msi 附件，此处不再重复。
 #
 # 校验项：
 #   - tag_push 场景 tag 名 == tauri.conf.json version；
@@ -180,23 +182,8 @@ if ($LASTEXITCODE -eq 0) {
     }
 }
 
-$HasMsi = $false
-pnpm exec tauri build --bundles msi
-if ($LASTEXITCODE -eq 0) {
-    $HasMsi = $true
-} else {
-    # WiX 目录名随 tauri 版本变化（WixTools / WixTools314），通配查找
-    $WixToolDir = Get-ChildItem (Join-Path $env:LOCALAPPDATA "tauri") -Directory -Filter "WixTools*" -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    Write-Host "WARN: msi 打包失败（WiX candle 被安全软件拦截？），尝试修复重试" -ForegroundColor Yellow
-    if ($WixToolDir -and (Repair-ToolDir -ToolDir $WixToolDir.FullName -MainExe "candle.exe" -MinSize 1MB)) {
-        pnpm exec tauri build --bundles msi
-        if ($LASTEXITCODE -eq 0) { $HasMsi = $true }
-    }
-    if (-not $HasMsi) {
-        Write-Host "WARN: 跳过 msi（面向企业部署场景，应用内更新走 nsis，不受影响）" -ForegroundColor Yellow
-    }
-}
+# msi 已移除：WiX candle 在本节点必被杀软拦截且挂死 5~10 分钟（v0.1.10
+# 实测拖慢整条流水线 ~14 分钟仍无产物），msi 附件由 GitHub Actions 提供。
 
 # ---------- 4. 收集产物（zip 兜底，保证至少一件） ----------
 $Assets = @()          # 相对 AssetDir 的附件文件名（不含 sha256，指纹另行生成）
@@ -220,16 +207,6 @@ if ($HasNsis) {
         } else {
             Write-Host "WARN: 未找到 setup.exe.sig，应用内更新将无 Windows 条目" -ForegroundColor Yellow
         }
-    }
-}
-if ($HasMsi) {
-    $Msi = Get-ChildItem -Path (Join-Path $BundleDir "msi") -Filter "*.msi" -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if ($Msi) {
-        $Name = "zoro-${Version}-windows-amd64.msi"
-        Copy-Item $Msi.FullName (Join-Path $AssetDir $Name)
-        $Assets += $Name
-        Write-Host ("产物: {0} ({1:N1} MB)" -f $Msi.FullName, ($Msi.Length / 1MB))
     }
 }
 

@@ -65,11 +65,12 @@ else
   echo "无 CODESIGN_IDENTITY，使用 tauri.conf.json 的默认 ad-hoc 签名"
 fi
 if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
-  # 两个覆盖合并进同一份 config：--config 可多次传但按深度合并不如一次给全
+  # 两个覆盖合并进同一份 config：--config 可多次传但按深度合并不如一次给全；
+  # setdefault 兼容 CODESIGN_IDENTITY 未设置时 BUILD_OVERRIDES 为空对象的情况
   BUILD_OVERRIDES=$(python3 -c '
 import json, sys
 cfg = json.loads(sys.argv[1])
-cfg["bundle"]["createUpdaterArtifacts"] = True
+cfg.setdefault("bundle", {})["createUpdaterArtifacts"] = True
 print(json.dumps(cfg))
 ' "$BUILD_OVERRIDES")
   echo "检测到签名密钥，开启应用内更新产物"

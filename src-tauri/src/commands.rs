@@ -397,6 +397,39 @@ pub fn quit_app(app: AppHandle) -> Result<(), String> {
   Ok(())
 }
 
+/// 用系统默认浏览器打开一个 http(s) 链接（设置页的源码仓库入口）。
+///
+/// 为什么不用 tauri-plugin-opener：只为这一个外链入口引入一个插件 +
+/// capability 权限配置不划算，系统 open 链路三个平台各一行即可覆盖。
+///
+/// 安全约束：只放行 http/https scheme。前端传入的虽然是固定常量，
+/// 但 open/start/xdg-open 理论上能处理任意 scheme（file://、smb:// 等），
+/// 边界处做白名单校验，避免未来有人把动态输入接进来时踩坑。
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+  if !(url.starts_with("https://") || url.starts_with("http://")) {
+    return Err(format!("不允许打开非 http(s) 链接：{url}"));
+  }
+
+  // 三平台各用系统默认方式拉起浏览器；spawn 只负责拉起进程，浏览器自行接管
+  #[cfg(target_os = "macos")]
+  let result = std::process::Command::new("open").arg(&url).spawn();
+
+  #[cfg(target_os = "windows")]
+  // start 后第一个空参数是窗口标题占位符，防止 URL 被误当标题吞掉
+  let result = std::process::Command::new("cmd")
+    .args(["/C", "start", ""])
+    .arg(&url)
+    .spawn();
+
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  let result = std::process::Command::new("xdg-open").arg(&url).spawn();
+
+  result
+    .map(|_| ())
+    .map_err(|err| format!("打开浏览器失败：{err}"))
+}
+
 /// 向所有窗口广播配置变更事件。
 fn broadcast(app: &AppHandle) {
   if let Err(err) = app.emit("config-changed", ()) {

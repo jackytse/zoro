@@ -388,14 +388,13 @@ fn extract_home_dir_paths(bytes: &[u8], home_str: &str) -> Vec<String> {
 }
 
 /// 在一段可打印文本里查找 home 前缀并裁出存在的目录路径。
+///
+/// 直接对整段做 `find(home_str)` 循环：find 本身是 O(n)，while 循环会遍历段内
+/// 所有 home 出现位置，无需按长度切分。此前按 `\n\r\t` 递归切分是无效的——
+/// 入参只含 0x20..=0x7E 可打印字符，永远切不出更短的段，导致无限递归直至
+/// 栈溢出（进程 abort）；改用定长 `chunks` 又可能在边界处切断 `<home>/<dir>`
+/// 前缀而漏提取。因此这里彻底去掉长度分支，从根上消除递归。
 fn extract_from_run(run: &[u8], home_str: &str, out: &mut Vec<String>) {
-  if run.len() > 8192 {
-    // 超长段（如整段 JSON）按行兜底拆开再找，避免漏掉深处的路径
-    for piece in std::str::from_utf8(run).unwrap_or("").split(['\n', '\r', '\t']) {
-      extract_from_run(piece.as_bytes(), home_str, out);
-    }
-    return;
-  }
   let run_str = String::from_utf8_lossy(run);
   let home = Path::new(home_str);
   let mut search_from = 0usize;

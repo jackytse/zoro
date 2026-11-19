@@ -30,6 +30,7 @@ export default {
     settings: "設定",
     quit: "結束",
     quitApp: "結束應用",
+    checkUpdate: "檢測更新",
   },
 
   settings: {
@@ -147,5 +148,8 @@ export default {
     updateCheckFailed: "檢測更新失敗",
     updateInstallFailed: "下載或安裝更新失敗",
     updateSourceUnavailable: "更新源暫不可用：當前頻道還沒有包含更新清單的發布（更新清單託管在 CNB 倉庫 updater 分支）",
+    sourceRepo: "原始碼倉庫",
+    sourceRepoDesc: "CNB 為發布主渠道，GitHub 為原始碼鏡像",
+    openRepoFailed: "開啟倉庫連結失敗",
   },
 } as const;

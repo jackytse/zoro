@@ -32,6 +32,7 @@ export default {
     settings: "设置",
     quit: "退出",
     quitApp: "退出应用",
+    checkUpdate: "检测更新",
   },
 
   settings: {
@@ -159,5 +160,8 @@ export default {
     updateCheckFailed: "检测更新失败",
     updateInstallFailed: "下载或安装更新失败",
     updateSourceUnavailable: "更新源暂不可用：当前通道还没有包含更新清单的发布（更新清单托管在 CNB 仓库 updater 分支）",
+    sourceRepo: "源码仓库",
+    sourceRepoDesc: "CNB 为发布主渠道，GitHub 为源码镜像",
+    openRepoFailed: "打开仓库链接失败",
   },
 } as const;

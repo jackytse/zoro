@@ -31,6 +31,7 @@ export default {
     settings: "Settings",
     quit: "Quit",
     quitApp: "Quit application",
+    checkUpdate: "Check Updates",
   },
 
   settings: {
@@ -151,5 +152,8 @@ export default {
     updateCheckFailed: "Failed to check for updates",
     updateInstallFailed: "Failed to download or install the update",
     updateSourceUnavailable: "Update source unavailable: no release with an update manifest yet in this channel (manifests are hosted on the CNB updater branch)",
+    sourceRepo: "Source Code",
+    sourceRepoDesc: "CNB is the primary release channel; GitHub mirrors the source code",
+    openRepoFailed: "Failed to open repository link",
   },
 } as const;

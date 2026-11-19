@@ -5,6 +5,7 @@ import { useNotify } from "../composables/useNotify";
 import { desktop, type DesktopConfig, type Project } from "../api/desktop";
 import { applyLocale, resolveLocale } from "../i18n";
 import { useAppTheme } from "../composables/useAppTheme";
+import { useUpdater } from "../composables/useUpdater";
 import ToolIcon from "../components/ToolIcon.vue";
 import OverlayScrollbar from "../components/OverlayScrollbar.vue";
 import { formatRelativeTime } from "../utils/time";
@@ -79,6 +80,54 @@ async function quitApp() {
     await desktop.quitApp();
   } catch (error) {
     notify("error", t("tray.quitFailed"), { description: String(error) });
+  }
+}
+
+/**
+ * 弹窗内的更新检测状态机（复用 useUpdater，与设置页各自独立的实例）。
+ * 弹窗是独立 webview，与主窗口同 origin，localStorage 里的通道选择
+ * （zoro.update-channel）天然共享——用户在设置页切到预发布通道后，
+ * 这里检测的就是预发布清单。
+ */
+const {
+  phase: updatePhase,
+  newVersion,
+  errorMessage,
+  checkForUpdate,
+  downloadAndInstall,
+  restartApp,
+} = useUpdater();
+
+/** 左下角「检测更新」：按当前通道检测，结果全部用 toast 反馈并给出后续动作。
+ *  与主窗口启动检测的区别：这里由用户主动触发，所以「已是最新」也要出声 */
+async function checkUpdateFromPopup() {
+  await checkForUpdate();
+  if (updatePhase.value === "available") {
+    // 发现新版本：不自动消失，给「立即更新」入口，下载/安装在后台继续
+    notify("info", t("settings.newVersionFound", { version: newVersion.value }), {
+      duration: 0,
+      actions: [{ label: t("settings.updateNow"), onClick: () => void installFromPopup() }],
+    });
+  } else if (updatePhase.value === "latest") {
+    notify("info", t("settings.upToDate"));
+  } else if (updatePhase.value === "error") {
+    // 常见原因：无网络、该通道还没有包含更新清单的发布
+    notify("error", t("settings.updateCheckFailed"), { description: errorMessage.value });
+  }
+}
+
+/** toast「立即更新」回调：下载安装完成后提示重启。不自动重启——
+ *  即便用户中途收起弹窗（窗口只是隐藏），Rust 侧下载仍会继续完成，
+ *  重新打开弹窗/设置页都能拿到「重启应用」提示 */
+async function installFromPopup() {
+  await downloadAndInstall();
+  if (updatePhase.value === "ready") {
+    notify("success", t("settings.installedRestart"), {
+      duration: 0,
+      actions: [{ label: t("settings.restart"), onClick: () => void restartApp() }],
+    });
+  } else if (updatePhase.value === "error") {
+    notify("error", t("settings.updateInstallFailed"), { description: errorMessage.value });
   }
 }
 
@@ -200,12 +249,24 @@ onBeforeUnmount(() => {
       </OverlayScrollbar>
 
       <footer class="flex items-center gap-1 border-t border-default px-3 py-2">
+        <!-- 左下角检测更新：入口常驻，点击按当前通道检测并 toast 反馈 -->
+        <UButton
+          size="sm"
+          color="neutral"
+          variant="ghost"
+          icon="i-lucide-refresh-cw"
+          class="mr-auto"
+          :loading="updatePhase === 'checking'"
+          :aria-label="t('tray.checkUpdate')"
+          @click="checkUpdateFromPopup"
+        >
+          {{ t("tray.checkUpdate") }}
+        </UButton>
         <UButton
           size="sm"
           color="neutral"
           variant="ghost"
           icon="i-lucide-settings-2"
-          class="ml-auto"
           @click="goSettings"
         >
           {{ t("tray.settings") }}

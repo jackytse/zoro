@@ -175,6 +175,7 @@ pub fn run() {
       commands::show_main_window,
       commands::hide_tray_popup,
       commands::quit_app,
+      commands::open_url,
       updater::updater_check,
       updater::updater_download_and_install,
     ])

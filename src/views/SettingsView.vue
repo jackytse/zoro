@@ -486,6 +486,20 @@ async function handleInstallUpdate() {
   }
 }
 
+/** 两个镜像仓库的地址：CNB 是主发布渠道（Release 托管安装包与更新清单），
+ *  GitHub 仅作源码镜像与 tag 备份 */
+const REPO_CNB = "https://cnb.cool/jackytse/zoro";
+const REPO_GITHUB = "https://github.com/jackytse/zoro";
+
+/** 打开源码仓库外链（系统默认浏览器）；失败给明确提示而非静默 */
+async function openRepo(url: string) {
+  try {
+    await desktop.openUrl(url);
+  } catch (error) {
+    notify("error", t("settings.openRepoFailed"), { description: String(error) });
+  }
+}
+
 /**
  * 状态行文案；null 表示该阶段（初始态）不展示状态行。
  * 下载中拼 MB 进度：总大小拿不到时只显示已下载量
@@ -858,6 +872,33 @@ export default { name: "SettingsView" };
             :aria-label="t('settings.updateChannel')"
             @update:model-value="setChannel($event as UpdateChannel)"
           />
+        </div>
+        <!-- 源码仓库行：两个镜像仓库的外链入口，点击用系统默认浏览器打开 -->
+        <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
+          <div class="min-w-0">
+            <p class="text-sm font-medium">{{ t("settings.sourceRepo") }}</p>
+            <p class="mt-0.5 text-xs text-muted">{{ t("settings.sourceRepoDesc") }}</p>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <UButton
+              size="sm"
+              color="neutral"
+              variant="soft"
+              icon="i-lucide-cloud"
+              @click="openRepo(REPO_CNB)"
+            >
+              CNB
+            </UButton>
+            <UButton
+              size="sm"
+              color="neutral"
+              variant="soft"
+              icon="i-lucide-github"
+              @click="openRepo(REPO_GITHUB)"
+            >
+              GitHub
+            </UButton>
+          </div>
         </div>
       </UCard>
     </template>

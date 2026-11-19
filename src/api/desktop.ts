@@ -110,6 +110,8 @@ export const desktop = {
   showMainWindow: () => invoke<void>("show_main_window"),
   hideTrayPopup: () => invoke<void>("hide_tray_popup"),
   quitApp: () => invoke<void>("quit_app"),
+  /** 用系统默认浏览器打开 http(s) 链接（设置页的源码仓库入口）；后端校验 scheme 白名单 */
+  openUrl: (url: string) => invoke<void>("open_url", { url }),
   /** 订阅配置变更（任一窗口增删/打开项目后触发） */
   onConfigChanged: (handler: () => void) => {
     // listen 返回 Promise<UnlistenFn>；卸载函数本身是同步的，这里只负责转发

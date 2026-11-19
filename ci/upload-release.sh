@@ -60,7 +60,7 @@ die_on_http_error() {
 # ---------- 1. 确保 release 存在（已存在则复用，不存在则创建） ----------
 ensure_release() {
   local code
-  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$RELEASE_API/tags/$TAG")"
+  code="$(curl -s --retry 5 --retry-all-errors --retry-delay 2 -o "$RESP_FILE" -w '%{http_code}' -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$RELEASE_API/tags/$TAG")"
 
   if [[ "$code" == "200" ]]; then
     RELEASE_ID="$(node -p "JSON.parse(require('fs').readFileSync('$RESP_FILE')).id")"
@@ -86,7 +86,7 @@ ensure_release() {
       prerelease: false,
     }));
   ' "$TAG")
-  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -X POST \
+  code="$(curl -s --retry 5 --retry-all-errors --retry-delay 2 -o "$RESP_FILE" -w '%{http_code}' -X POST \
     -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" -H "Content-Type: application/json" \
     -d "$body" "$RELEASE_API")"
   die_on_http_error "$code" "创建 release"
@@ -116,7 +116,7 @@ upload_asset() {
       overwrite: true,
     }));
   ' "${name}" "${size}")
-  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -X POST \
+  code="$(curl -s --retry 5 --retry-all-errors --retry-delay 2 -o "$RESP_FILE" -w '%{http_code}' -X POST \
     -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" -H "Content-Type: application/json" \
     -d "$payload" "$RELEASE_API/$RELEASE_ID/asset-upload-url")"
   die_on_http_error "$code" "申请上传地址（${name}）"
@@ -126,11 +126,11 @@ upload_asset() {
   verify_url="$(node -p "JSON.parse(require('fs').readFileSync('$RESP_FILE')).verify_url")"
 
   # 2.2 预签名地址直传文件（无需鉴权头）；失败打印状态码便于排查代理/网络问题
-  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -X PUT --upload-file "$file" "$upload_url")"
+  code="$(curl -s --retry 5 --retry-all-errors --retry-delay 2 -o "$RESP_FILE" -w '%{http_code}' -X PUT --upload-file "$file" "$upload_url")"
   die_on_http_error "$code" "上传附件（${name}）"
 
   # 2.3 确认上传（verify_url 即确认端点，带鉴权调一次即入库）
-  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -X POST -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$verify_url")"
+  code="$(curl -s --retry 5 --retry-all-errors --retry-delay 2 -o "$RESP_FILE" -w '%{http_code}' -X POST -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$verify_url")"
   die_on_http_error "$code" "确认上传（${name}）"
 
   echo "✓ 附件已上传: ${name} ($(( size / 1024 / 1024 ))M)"
@@ -162,7 +162,7 @@ finalize_updater_manifest() {
   # git-bash 工具链（curl/cp/git）同样接受该形式，三端通用
   command -v cygpath >/dev/null 2>&1 && SIG_DIR="$(cygpath -m "$SIG_DIR")"
   local sig_assets
-  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$RELEASE_API/$RELEASE_ID")"
+  code="$(curl -s --retry 5 --retry-all-errors --retry-delay 2 -o "$RESP_FILE" -w '%{http_code}' -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$RELEASE_API/$RELEASE_ID")"
   if [[ ! "$code" =~ ^2 ]]; then
     echo "WARN: finalize 跳过（读取 release 附件列表失败 HTTP $code）" >&2
     rm -rf "$SIG_DIR"; return 0
@@ -179,7 +179,7 @@ finalize_updater_manifest() {
     [[ -z "$p" ]] && continue
     # 附件下载走 api.cnb.cool 域名（响应里给的就是该域名），需带鉴权头；
     # -L 跟随重定向：该接口会 302 跳到 asset.cnb.cool 的预签名地址
-    if curl -sL -o "$SIG_DIR/$(basename "$p")" -w '%{http_code}' -H "$AUTH_HEADER" \
+    if curl -sL --retry 5 --retry-all-errors --retry-delay 2 -o "$SIG_DIR/$(basename "$p")" -w '%{http_code}' -H "$AUTH_HEADER" \
         "$API_BASE$p" | grep -q '^2'; then
       count=$((count + 1))
     fi
@@ -252,7 +252,7 @@ finalize_updater_manifest() {
   #     下只会「升」到更高的正式版，不会被动回退。
   local UPDATER_TAG="updater-manifest"
   local code
-  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$RELEASE_API/tags/$UPDATER_TAG")"
+  code="$(curl -s --retry 5 --retry-all-errors --retry-delay 2 -o "$RESP_FILE" -w '%{http_code}' -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$RELEASE_API/tags/$UPDATER_TAG")"
   if [[ "$code" == "200" ]]; then
     RELEASE_ID="$(node -p "JSON.parse(require('fs').readFileSync('$RESP_FILE')).id")"
     echo "✓ updater-manifest release 已存在（id=${RELEASE_ID}），覆盖上传"
@@ -262,7 +262,7 @@ finalize_updater_manifest() {
     # prerelease=false 保持正式身份（它不是预发布，只是清单载体）
     local body
     body='{"tag_name":"updater-manifest","name":"updater-manifest","body":"应用内热更新清单（CI 自动维护，请勿手动编辑）。latest.json = 正式版通道；latest-beta.json = 预发布通道。","make_latest":"false","draft":false,"prerelease":false}'
-    code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -X POST \
+    code="$(curl -s --retry 5 --retry-all-errors --retry-delay 2 -o "$RESP_FILE" -w '%{http_code}' -X POST \
       -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" -H "Content-Type: application/json" \
       -d "$body" "$RELEASE_API")"
     if [[ ! "$code" =~ ^2 ]]; then

@@ -286,9 +286,12 @@ if ($Ref -like "v*") {
         $SigPath = "$AssetDir/$name.sig"
         if (Test-Path $SigPath) { $UploadFiles += $SigPath }
     }
-    & $BashExe ci/upload-release.sh @UploadFiles
+    # 显式合并 stderr 并回显：CI 日志对 bash 子进程的 stderr 捕获不可靠，
+    # 上传失败时若不捕获 2>&1，报错会被吞掉只剩一句 FAIL
+    $BashOutput = & $BashExe ci/upload-release.sh @UploadFiles 2>&1
+    $BashOutput | ForEach-Object { Write-Host "$_" }
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "== FAIL: release 上传失败" -ForegroundColor Red
+        Write-Host ("== FAIL: release 上传失败（bash exit={0}）" -f $LASTEXITCODE) -ForegroundColor Red
         exit 1
     }
 } else {

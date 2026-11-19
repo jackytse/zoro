@@ -41,6 +41,13 @@ $Version = node -p "require('./src-tauri/tauri.conf.json').version"
 $Ref = if ($env:CNB_BRANCH) { $env:CNB_BRANCH } else { "unknown" }
 Write-Host "构建引用: $Ref / 应用版本: $Version / 架构: $env:PROCESSOR_ARCHITECTURE"
 
+# updater-manifest 是热更新清单承载 tag（见 upload-release.sh finalize），
+# 不是版本 tag——CI 维护清单时若触发了 tag_push 流水线，直接跳过构建
+if ($Ref -eq "updater-manifest") {
+    Write-Host "updater-manifest 为热更新清单 tag，跳过应用构建"
+    exit 0
+}
+
 if ($Ref -like "v*") {
     if ("v$Version" -ne $Ref) {
         Write-Host "tag 与版本号不一致：tag=$Ref，tauri.conf.json version=$Version。" -ForegroundColor Red

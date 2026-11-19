@@ -27,6 +27,13 @@ VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
 REF="${CNB_BRANCH:-unknown}"
 echo "构建引用: $REF / 应用版本: $VERSION"
 
+# updater-manifest 是热更新清单承载 tag（见 upload-release.sh finalize），
+# 不是版本 tag——CI 维护清单时若触发了 tag_push 流水线，直接跳过构建
+if [[ "$REF" == "updater-manifest" ]]; then
+  echo "updater-manifest 为热更新清单 tag，跳过应用构建"
+  exit 0
+fi
+
 if [[ "$REF" == v* ]]; then
   if [[ "v$VERSION" != "$REF" ]]; then
     echo "tag 与版本号不一致：tag=$REF，tauri.conf.json version=$VERSION。" >&2

@@ -1,9 +1,11 @@
 //! 应用内更新（多通道）。
 //!
-//! 更新通道分「正式版 stable」与「预发布 beta」，两个通道各对应更新源
-//! 孤儿分支（updater）上的一份独立清单：
-//!   - stable → https://cnb.cool/jackytse/zoro/-/git/raw/updater/latest.json
-//!   - beta   → https://cnb.cool/jackytse/zoro/-/git/raw/updater/latest-beta.json
+//! 更新通道分「正式版 stable」与「预发布 beta」，两个通道各对应固定 tag
+//! 「updater-manifest」Release 上的一份清单附件（CI 每次发版覆盖上传同名
+//! 附件即完成清单更新，客户端端点永不变化）：
+//!   - stable → https://cnb.cool/jackytse/zoro/-/releases/download/updater-manifest/latest.json
+//!   - beta   → https://cnb.cool/jackytse/zoro/-/releases/download/updater-manifest/latest-beta.json
+//! （releases/download 附件地址匿名可下载，与参考实现 wocnb 的热更新链路一致）
 //!
 //! 为什么不用 JS 端 @tauri-apps/plugin-updater 的 check()：它只能用
 //! tauri.conf.json 里配置的固定端点，无法按用户选择的通道切换清单文件。
@@ -43,7 +45,9 @@ fn channel_endpoint(channel: &str) -> Result<url::Url, String> {
   } else {
     "latest.json"
   };
-  format!("https://cnb.cool/jackytse/zoro/-/git/raw/updater/{file}")
+  // 清单托管在固定 tag「updater-manifest」的 Release 附件上：
+  // CI 发版时覆盖上传同名附件，端点 URL 永不变化，且匿名可下载
+  format!("https://cnb.cool/jackytse/zoro/-/releases/download/updater-manifest/{file}")
     .parse()
     .map_err(|e| format!("更新端点 URL 无效: {e}"))
 }

@@ -16,11 +16,13 @@
 #   - 所有请求显式检查状态码并在失败时打印响应体：CI 日志里能直接看到
 #     4xx/5xx 的原因，而不是 curl -f 静默退出码；
 #   - 附件上传完会后尝试「更新清单 finalize」：从 release 附件里收集各平台
-#     更新包的 .sig 签名，按通道生成更新清单并 force push 到仓库 updater 分支
-#     ——应用内 updater 分「正式版 / 预发布」双通道（见 src-tauri/src/updater.rs），
-#     端点分别为
-#     https://cnb.cool/<repo>/-/git/raw/updater/latest.json（正式版）
-#     https://cnb.cool/<repo>/-/git/raw/updater/latest-beta.json（预发布）。
+#     更新包的 .sig 签名，按通道生成更新清单，覆盖上传到**固定 tag
+#     「updater-manifest」的 Release**（不存在则自动创建）——应用内 updater
+#     分「正式版 / 预发布」双通道（见 src-tauri/src/updater.rs），端点分别为
+#     https://cnb.cool/<repo>/-/releases/download/updater-manifest/latest.json（正式版）
+#     https://cnb.cool/<repo>/-/releases/download/updater-manifest/latest-beta.json（预发布）。
+#     每次发版覆盖同名附件即完成清单更新，客户端端点永不变化
+#     （与 wocnb 的热更新链路同构；releases/download 附件地址匿名可下载）。
 #     三平台流水线并行，谁最后完成谁写入最全的清单；单平台失败时清单里
 #     缺该平台条目，对应平台用户表现为「无更新」，不影响其他平台升级。
 set -euo pipefail
@@ -148,7 +150,7 @@ done
 
 echo "✓ 全部附件上传完成: https://cnb.cool/$REPO_SLUG/-/releases/tag/$TAG"
 
-# ---------- 4. 更新清单 finalize：生成 latest.json 并推到 updater 分支 ----------
+# ---------- 4. 更新清单 finalize：生成 latest.json 并覆盖上传到 updater-manifest ----------
 # 说明见文件头部；任何失败只 WARN 不阻塞——发布主链路（release 附件）已完成，
 # 更新清单是增强能力，不能因为它把整条发布流水线判红。
 finalize_updater_manifest() {
@@ -239,48 +241,60 @@ finalize_updater_manifest() {
     rm -rf "$SIG_DIR"; return 0
   fi
 
-  # ---- 4.3 更新 updater 分支（孤儿分支：latest.json 正式 / latest-beta.json 预发布） ----
-  # CNB 没有 GitHub 那样的 releases/latest/download 固定别名，所以用一个
-  # 专用分支承载更新清单；raw 地址即 updater 端点。
-  # 先尝试克隆现有分支：预发布 tag 时要原样保留 latest.json（正式通道不被
-  # 预发布数据覆盖）；分支不存在则当首次发布，从零初始化。
-  local PUSH_DIR
-  PUSH_DIR="$(mktemp -d)"
-  local push_url="https://${CNB_TOKEN_USER_NAME:-cnb}:${CNB_TOKEN}@cnb.cool/${REPO_SLUG}.git"
-  if git clone -q --depth 1 -b updater "$push_url" "$PUSH_DIR" 2>/dev/null; then
-    echo "✓ 已拉取现有 updater 分支（双通道合并）"
-  else
-    git init -q -b updater "$PUSH_DIR"
-    echo "updater 分支不存在，按首次发布初始化"
-  fi
-
-  if [[ "$TAG" == *-* ]]; then
-    # 预发布 tag：只更新预发布清单
-    cp "$OUT" "$PUSH_DIR/latest-beta.json"
-    if [[ ! -f "$PUSH_DIR/latest.json" ]]; then
-      echo "WARN: 正式通道清单尚不存在（首个正式 tag 发布时生成，预发布通道不受影响）" >&2
+  # ---- 4.3 覆盖上传到固定 tag「updater-manifest」的 Release ----
+  # 清单附件化（参考 wocnb 热更新链路）：固定 tag 的 Release 充当「latest」
+  # 角色，每次发版 overwrite 上传同名附件；客户端端点
+  # /-/releases/download/updater-manifest/<清单名> 永不变化且匿名可下载。
+  # 通道规则：
+  #   - 预发布 tag（含连字符，如 v0.1.6-beta.1）：只覆盖 latest-beta.json，
+  #     正式通道清单不被预发布数据污染；
+  #   - 正式 tag（vX.Y.Z）：两个清单都指向本 release——预发布用户在 semver
+  #     下只会「升」到更高的正式版，不会被动回退。
+  local UPDATER_TAG="updater-manifest"
+  local code
+  code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" "$RELEASE_API/tags/$UPDATER_TAG")"
+  if [[ "$code" == "200" ]]; then
+    RELEASE_ID="$(node -p "JSON.parse(require('fs').readFileSync('$RESP_FILE')).id")"
+    echo "✓ updater-manifest release 已存在（id=${RELEASE_ID}），覆盖上传"
+  elif [[ "$code" == "404" ]]; then
+    # 首次发布：创建清单承载 Release（tag 不存在时 CNB 会随 release 自动建 tag）。
+    # make_latest=false 避免清单 Release 抢走仓库「最新发布」入口；
+    # prerelease=false 保持正式身份（它不是预发布，只是清单载体）
+    local body
+    body='{"tag_name":"updater-manifest","name":"updater-manifest","body":"应用内热更新清单（CI 自动维护，请勿手动编辑）。latest.json = 正式版通道；latest-beta.json = 预发布通道。","make_latest":"false","draft":false,"prerelease":false}'
+    code="$(curl -s -o "$RESP_FILE" -w '%{http_code}' -X POST \
+      -H "$AUTH_HEADER" -H "$ACCEPT_HEADER" -H "Content-Type: application/json" \
+      -d "$body" "$RELEASE_API")"
+    if [[ ! "$code" =~ ^2 ]]; then
+      echo "WARN: finalize 跳过（创建 updater-manifest release 失败 HTTP $code）" >&2
+      cat "$RESP_FILE" >&2 || true
+      rm -rf "$SIG_DIR"; return 0
     fi
+    RELEASE_ID="$(node -p "JSON.parse(require('fs').readFileSync('$RESP_FILE')).id")"
+    echo "✓ updater-manifest release 已创建（id=${RELEASE_ID}）"
   else
-    # 正式 tag：两个通道都指向本 release
-    cp "$OUT" "$PUSH_DIR/latest.json"
-    cp "$OUT" "$PUSH_DIR/latest-beta.json"
+    echo "WARN: finalize 跳过（查询 updater-manifest release 失败 HTTP $code）" >&2
+    rm -rf "$SIG_DIR"; return 0
   fi
 
-  if (
-    cd "$PUSH_DIR" &&
-    git add -A &&
-    git -c user.name="cnb-ci" -c user.email="ci@cnb.cool" \
-      commit -q -m "chore: updater manifest for $TAG" &&
-    git push -q --force "$push_url" HEAD:refs/heads/updater
-  ) 2>/dev/null; then
-    echo "✓ 更新清单已发布:"
-    echo "    正式版: https://cnb.cool/$REPO_SLUG/-/git/raw/updater/latest.json"
-    echo "    预发布: https://cnb.cool/$REPO_SLUG/-/git/raw/updater/latest-beta.json"
+  # overwrite=true：同名附件覆盖（upload_asset 内部已处理），重跑流水线幂等。
+  # 注意附件名必须叫 latest.json / latest-beta.json（客户端端点固定），
+  # 先 cp 成目标名字再上传
+  if [[ "$TAG" == *-* ]]; then
+    cp "$OUT" "$SIG_DIR/latest-beta.json"
+    upload_asset "$SIG_DIR/latest-beta.json"
+    echo "（预发布 tag：正式通道清单保持不变）"
   else
-    echo "WARN: updater 分支推送失败（清单保留在 $SIG_DIR，可手动检查）" >&2
-    return 0
+    cp "$OUT" "$SIG_DIR/latest.json"
+    upload_asset "$SIG_DIR/latest.json"
+    cp "$OUT" "$SIG_DIR/latest-beta.json"
+    upload_asset "$SIG_DIR/latest-beta.json"
   fi
-  rm -rf "$SIG_DIR" "$PUSH_DIR"
+
+  echo "✓ 更新清单已发布:"
+  echo "    正式版: https://cnb.cool/$REPO_SLUG/-/releases/download/updater-manifest/latest.json"
+  echo "    预发布: https://cnb.cool/$REPO_SLUG/-/releases/download/updater-manifest/latest-beta.json"
+  rm -rf "$SIG_DIR"
 }
 
 finalize_updater_manifest

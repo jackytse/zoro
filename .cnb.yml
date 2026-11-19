@@ -121,6 +121,13 @@ main:
     - name: manual-release-linux
       runner: *runner-linux
       docker: *ci-docker
+      # 注入应用更新签名私钥：从密钥仓库 jackytse/secrets 的 zoro.yaml 导入
+      # TAURI_SIGNING_PRIVATE_KEY 环境变量。三端构建脚本（ci/release.sh /
+      # mac-build.sh / win-build.ps1）检测到该变量才追加 createUpdaterArtifacts
+      # 配置产出 .sig 签名文件，供 tauri-plugin-updater 自动升级校验。
+      # 密钥仓库文件默认仅允许管理员/负责人触发引用，当前触发者即仓库所有者
+      imports: &signing-imports
+        - https://cnb.cool/jackytse/secrets/-/blob/main/zoro.yaml
       stages: &release-stages
         - name: prepare environment
           script: bash ci/setup.sh
@@ -138,6 +145,7 @@ main:
         tags: &runner-mac-tags
           - mac
           - arm64
+      imports: *signing-imports
       stages: &mac-release-stages
         # Mac 节点没有容器环境，每步都要先自备工具链与依赖
         - name: prepare mac environment
@@ -155,6 +163,7 @@ main:
         tags: &runner-win-tags
           - win
           - amd64
+      imports: *signing-imports
       stages: &win-release-stages
         # Windows 节点同样没有容器环境，stage 默认 shell 是 PowerShell；
         # 通过 powershell -File 显式调用，-ExecutionPolicy Bypass 绕过脚本执行策略限制
@@ -174,6 +183,7 @@ $:
     - name: release-linux
       runner: *runner-linux
       docker: *ci-docker
+      imports: *signing-imports
       stages: *release-stages
       failStages:
         - name: report failure
@@ -183,6 +193,7 @@ $:
       runner:
         namespace: group
         tags: *runner-mac-tags
+      imports: *signing-imports
       stages: *mac-release-stages
       failStages:
         - name: report failure
@@ -192,6 +203,7 @@ $:
       runner:
         namespace: group
         tags: *runner-win-tags
+      imports: *signing-imports
       stages: *win-release-stages
       failStages:
         - name: report failure

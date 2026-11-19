@@ -143,6 +143,9 @@ pub struct AppState {
   pub popup_last_shown: Mutex<Option<Instant>>,
   /// 当前实际注册成功的全局快捷键（global-hotkey 格式），None 表示未注册（禁用态）
   pub active_shortcut: Mutex<Option<String>>,
+  /// Cmd+Q 二次确认的布防时间：Some = 已提示过待确认，窗口期内再按一次才退出。
+  /// 只有应用菜单的退出快捷键走这条链路（托盘菜单「退出应用」是显式点击，保持立即退出）
+  pub quit_armed: Mutex<Option<Instant>>,
 }
 
 /// 候选工具目录条目：一个主流开发工具的完整定义 + 安装探测路径。
@@ -539,6 +542,7 @@ pub fn init(app: &tauri::AppHandle) -> Result<AppState, Box<dyn std::error::Erro
     popup_last_hidden: Mutex::new(None),
     popup_last_shown: Mutex::new(None),
     active_shortcut: Mutex::new(None),
+    quit_armed: Mutex::new(None),
   };
   // 首次运行时把默认配置写盘，让设置页与托盘读到同一份来源
   save(&state)?;

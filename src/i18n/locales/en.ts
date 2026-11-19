@@ -32,6 +32,7 @@ export default {
     quit: "Quit",
     quitApp: "Quit application",
     checkUpdate: "Check Updates",
+    quitConfirmHint: "Press ⌘Q again to quit",
   },
 
   settings: {

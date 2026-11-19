@@ -143,6 +143,8 @@ async function openInTerminal(project: Project) {
 
 /** 配置变更监听的取消函数；卸载时解绑，避免重复订阅 */
 let offConfigChanged: (() => void) | null = null;
+/** Cmd+Q 二次确认提示监听的取消函数 */
+let offQuitConfirmHint: (() => void) | null = null;
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") {
@@ -160,11 +162,16 @@ onMounted(async () => {
   await loadConfig();
   // 设置页增删项目后，弹窗里的列表要跟着刷新
   offConfigChanged = desktop.onConfigChanged(() => void loadConfig());
+  // Cmd+Q 首次按下：与主窗口一致的 toast 提示（用户可能在弹窗聚焦时按快捷键）
+  offQuitConfirmHint = desktop.onQuitConfirmHint(() => {
+    notify("info", t("tray.quitConfirmHint"), { duration: 3000 });
+  });
   window.addEventListener("keydown", onKeydown);
 });
 
 onBeforeUnmount(() => {
   offConfigChanged?.();
+  offQuitConfirmHint?.();
   window.removeEventListener("keydown", onKeydown);
 });
 </script>

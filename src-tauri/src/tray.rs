@@ -12,7 +12,7 @@ use crate::config::AppState;
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, Rect, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, Rect, WebviewUrl, WebviewWindowBuilder};
 // 物理坐标定位只在非 macOS 平台用（macOS 走 CG 点空间）
 #[cfg(not(target_os = "macos"))]
 use tauri::PhysicalPosition;
@@ -55,6 +55,106 @@ fn tray_tooltip(locale: &str) -> &'static str {
     "en" => "zoro - Recent Projects",
     _ => "zoro - 最近项目",
   }
+}
+
+/// Cmd+Q 二次确认的窗口期：首次按下只提示，窗口期内再按一次才真正退出。
+/// 3 秒是常见「双击确认」交互的体验上限，太短用户来不及反应，太长像失效。
+#[cfg(target_os = "macos")]
+const QUIT_CONFIRM_WINDOW: Duration = Duration::from_secs(3);
+
+/// 退出快捷键（Cmd+Q）二次确认状态机。
+///
+/// 首次按下：布防（记录时间）+ 向所有窗口广播 quit-confirm-hint，
+/// 前端 toast「再按一次确认退出」；窗口期内再次按下：拆防并退出。
+/// 超过窗口期的按下视为新一轮「首次按下」，重新布防。
+///
+/// 为什么只拦应用菜单的退出项而不动托盘菜单「退出应用」：快捷键误触是
+/// 误退出的主因，显式点菜单是有意识的操作，保持立即退出。
+#[cfg(target_os = "macos")]
+fn handle_quit_shortcut(app: &AppHandle) {
+  let state = app.state::<AppState>();
+  // 布防/拆防一次完成：读出「是否在窗口期内」，再写入新状态
+  let confirmed = {
+    let mut guard = state.quit_armed.lock().unwrap();
+    let confirmed = guard
+      .map(|t| t.elapsed() < QUIT_CONFIRM_WINDOW)
+      .unwrap_or(false);
+    *guard = if confirmed { None } else { Some(Instant::now()) };
+    confirmed
+  };
+  if confirmed {
+    log::info!("退出快捷键二次确认命中，退出应用");
+    app.exit(0);
+  } else {
+    log::info!("退出快捷键首次按下，提示二次确认");
+    let _ = app.emit("quit-confirm-hint", ());
+  }
+}
+
+/// macOS 应用菜单：替换 Tauri 默认菜单，把「Cmd+Q 立即退出」换成二次确认。
+///
+/// 必须自带完整菜单的原因：一旦 set_menu，默认菜单整个消失，系统标准
+/// 编辑快捷键（Cmd+C/V/X/Z）也会跟着失效——所以补一个预定义 Edit 子菜单。
+/// 第一个子菜单即 macOS 应用菜单（屏幕左上角的应用名下），把「设置 /
+/// 退出应用」放这里，与托盘菜单文案保持一致。
+///
+/// 仅 macOS 构建：Windows/Linux 没有应用菜单概念，Alt+F4 等由系统窗口
+/// 关闭链路处理（走 CloseRequested → 隐藏，不涉及本状态机）。
+#[cfg(target_os = "macos")]
+pub fn create_app_menu(app: &AppHandle) -> tauri::Result<()> {
+  use tauri::menu::{IsMenuItem, PredefinedMenuItem, Submenu};
+
+  let locale = app
+    .try_state::<AppState>()
+    .map(|s| s.config.lock().unwrap().locale().to_string())
+    .unwrap_or_default();
+  let (settings_label, quit_label) = match locale.as_str() {
+    "zh-TW" => ("設定", "結束應用"),
+    "en" => ("Settings", "Quit App"),
+    _ => ("设置", "退出应用"),
+  };
+
+  // 应用子菜单：设置 + 分隔线 + 退出（挂 Cmd+Q 快捷键，接管默认的立即退出）。
+  // 数组元素是 MenuItem 与 PredefinedMenuItem 的混合类型，必须显式声明成
+  // &dyn IsMenuItem 才能放进同一个切片
+  let app_submenu = Submenu::with_items(
+    app,
+    "Zoro",
+    true,
+    &[
+      &MenuItem::with_id(app, "show-main", settings_label, true, None::<&str>)?
+        as &dyn IsMenuItem<tauri::Wry>,
+      &PredefinedMenuItem::separator(app)? as &dyn IsMenuItem<tauri::Wry>,
+      &MenuItem::with_id(app, "app-quit", quit_label, true, Some("CmdOrCtrl+Q"))?
+        as &dyn IsMenuItem<tauri::Wry>,
+    ],
+  )?;
+  // 编辑子菜单：系统预定义项，保证主窗口输入框的编辑快捷键继续可用
+  let edit_submenu = Submenu::with_items(
+    app,
+    "Edit",
+    true,
+    &[
+      &PredefinedMenuItem::undo(app, None)? as &dyn IsMenuItem<tauri::Wry>,
+      &PredefinedMenuItem::redo(app, None)? as &dyn IsMenuItem<tauri::Wry>,
+      &PredefinedMenuItem::separator(app)? as &dyn IsMenuItem<tauri::Wry>,
+      &PredefinedMenuItem::cut(app, None)? as &dyn IsMenuItem<tauri::Wry>,
+      &PredefinedMenuItem::copy(app, None)? as &dyn IsMenuItem<tauri::Wry>,
+      &PredefinedMenuItem::paste(app, None)? as &dyn IsMenuItem<tauri::Wry>,
+      &PredefinedMenuItem::select_all(app, None)? as &dyn IsMenuItem<tauri::Wry>,
+    ],
+  )?;
+  let menu = Menu::with_items(app, &[&app_submenu, &edit_submenu])?;
+  app.set_menu(menu)?;
+
+  // 应用菜单事件走全局 handler（托盘菜单有自己的 handler，互不影响；
+  // id 用独立命名空间，避免与托盘的 quit 混淆）
+  app.on_menu_event(|app, event| match event.id().as_ref() {
+    "show-main" => show_main_window(app),
+    "app-quit" => handle_quit_shortcut(app),
+    _ => {}
+  });
+  Ok(())
 }
 
 /// 创建托盘图标：左键 = 弹出最近项目，右键 = 系统菜单（显示主窗口 / 退出）。

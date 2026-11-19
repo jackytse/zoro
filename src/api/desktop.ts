@@ -120,4 +120,14 @@ export const desktop = {
       void unlisten.then((off) => off());
     };
   },
+  /**
+   * 订阅「退出快捷键二次确认」提示（macOS Cmd+Q 首次按下时后端广播）。
+   * 后端不负责 UI，提示文案交给两个窗口各自的 toast 展示
+   */
+  onQuitConfirmHint: (handler: () => void) => {
+    const unlisten = listen("quit-confirm-hint", handler);
+    return () => {
+      void unlisten.then((off) => off());
+    };
+  },
 };

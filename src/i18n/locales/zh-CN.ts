@@ -33,6 +33,7 @@ export default {
     quit: "退出",
     quitApp: "退出应用",
     checkUpdate: "检测更新",
+    quitConfirmHint: "再按一次 ⌘Q 确认退出",
   },
 
   settings: {

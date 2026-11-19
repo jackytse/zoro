@@ -102,6 +102,11 @@ pub fn run() {
       tray::create_tray(app.handle())?;
       tray::create_popup_window(app.handle())?;
 
+      // macOS 应用菜单：把默认的「Cmd+Q 立即退出」换成二次确认退出。
+      // 必须在窗口创建后调用，且只在 macOS 构建（其他平台无应用菜单概念）
+      #[cfg(target_os = "macos")]
+      tray::create_app_menu(app.handle())?;
+
       // 纯托盘应用：不显示 Dock 图标（macOS 的 Accessory 模式）。
       // 必须在 setup 里调用——事件循环启动后切换会无效或不生效。
       // 隐藏 Dock 后 RunEvent::Reopen 不会再触发，主窗口改由

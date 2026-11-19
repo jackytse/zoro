@@ -31,6 +31,7 @@ export default {
     quit: "結束",
     quitApp: "結束應用",
     checkUpdate: "檢測更新",
+    quitConfirmHint: "再按一次 ⌘Q 結束應用",
   },
 
   settings: {

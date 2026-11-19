@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useColorMode } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { desktop, type DesktopConfig } from "./api/desktop";
 import { useAppTheme } from "./composables/useAppTheme";
+import { useNotify } from "./composables/useNotify";
 import { useStartupUpdateCheck } from "./composables/useUpdater";
 import OverlayScrollbar from "./components/OverlayScrollbar.vue";
 
@@ -15,6 +16,7 @@ import OverlayScrollbar from "./components/OverlayScrollbar.vue";
  */
 const colorMode = useColorMode();
 const { t } = useI18n();
+const notify = useNotify();
 
 /** 配置快照：App 层只需要 theme（语言等由页面组件各自消费） */
 const config = ref<DesktopConfig | null>(null);
@@ -31,6 +33,8 @@ function toggleColorMode() {
 
 /** 配置变更监听的取消函数；卸载时解绑 */
 let offConfigChanged: (() => void) | null = null;
+/** Cmd+Q 二次确认提示监听的取消函数 */
+let offQuitConfirmHint: (() => void) | null = null;
 
 onMounted(() => {
   void desktop
@@ -43,9 +47,18 @@ onMounted(() => {
       .then((c) => (config.value = c))
       .catch(() => {});
   });
+  // Cmd+Q 首次按下：toast 提示「再按一次确认退出」；窗口期 3 秒由 Rust 侧控制
+  offQuitConfirmHint = desktop.onQuitConfirmHint(() => {
+    notify("info", t("tray.quitConfirmHint"), { duration: 3000 });
+  });
   // 启动自动检测更新（延迟 5s 静默执行）：发现新版本时 toast 提示并提供
   // 「立即更新」按钮；内部有模块级守卫，整个生命周期只检测一次
   useStartupUpdateCheck();
+});
+
+onBeforeUnmount(() => {
+  offConfigChanged?.();
+  offQuitConfirmHint?.();
 });
 </script>
 

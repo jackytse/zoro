@@ -38,6 +38,9 @@ tauri-plugin-process = "2"
 # 更新通道端点构造（updater_builder().endpoints() 需要 url::Url；
 # 该 crate 已在 tauri 依赖树中，显式声明仅为直接引用）
 url = "2"
+# 系统界面语言探测：托盘菜单在「跟随系统」模式下按系统 locale 选语言，
+# 与前端 detectLocale()（navigator.language）规则对齐
+sys-locale = "0.3"
 
 # macOS：直接访问 NSStatusItem / NSScreen，取托盘图标的权威位置，
 # 解决多显示器混合缩放下按几何推算定位弹窗失效的问题

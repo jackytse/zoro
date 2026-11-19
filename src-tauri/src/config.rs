@@ -87,6 +87,26 @@ fn default_true() -> bool {
   true
 }
 
+/// 解析系统界面语言（托盘菜单等 Rust 侧文案在「跟随系统」模式下使用）。
+/// 规则与前端 detectLocale()（navigator.language）对齐：
+///   - zh 开头且带繁体标识（Hant / TW / HK / MO）→ zh-TW
+///   - zh 开头其它（简体）→ zh-CN
+///   - 其余一律 → en
+/// sys-locale 返回 BCP47 标签（如 "zh-Hant-TW" / "en-US"），统一小写后匹配；
+/// 拿不到系统语言（极少见）时按英文处理。
+fn resolve_system_locale() -> &'static str {
+  let lang = sys_locale::get_locale().unwrap_or_default().to_lowercase();
+  if lang.starts_with("zh") {
+    if lang.contains("hant") || lang.contains("-tw") || lang.contains("-hk") || lang.contains("-mo") {
+      "zh-TW"
+    } else {
+      "zh-CN"
+    }
+  } else {
+    "en"
+  }
+}
+
 /// 终端打开方式的缺省值：新窗口。
 /// Option<String> + None 处理为 window，而不是用 serde default 字符串，
 /// 这样「用户显式存过 existing」与「从未设置」在语义上都归一到 window/existing。
@@ -101,13 +121,14 @@ impl Config {
   }
 
   /// 归一化后的界面语言：只可能是 "zh-CN" / "zh-TW" / "en"。
-  /// None 或无法识别的值统一回落 "zh-CN"（托盘菜单等 Rust 侧文案用它），
-  /// 「跟随系统」的探测逻辑在前端（navigator.language），Rust 侧不重复实现。
+  /// 显式配置直接采用；None 或脏数据 = 跟随系统语言——按系统 locale 解析
+  ///（规则与前端 detectLocale 一致），托盘菜单与前端界面保持同一种语言。
   pub fn locale(&self) -> &str {
     match self.locale.as_deref() {
       Some("zh-TW") => "zh-TW",
       Some("en") => "en",
-      _ => "zh-CN",
+      Some("zh-CN") => "zh-CN",
+      _ => resolve_system_locale(),
     }
   }
 }

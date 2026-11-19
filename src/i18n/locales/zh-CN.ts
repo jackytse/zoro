@@ -146,6 +146,7 @@ export default {
     currentVersion: "当前版本",
     currentVersionDesc: "安装包与更新清单由 CNB Release 托管，更新包经 minisign 签名校验",
     updateChannel: "更新通道",
+    updateChannelDesc: "预发布通道会提前体验新功能，但可能不够稳定",
     updateChannelStable: "正式版",
     updateChannelBeta: "预发布",
     checkUpdate: "检测更新",

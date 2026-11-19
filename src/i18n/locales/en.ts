@@ -138,6 +138,7 @@ export default {
     currentVersion: "Current version",
     currentVersionDesc: "Installers and update manifests are hosted on CNB Releases; updates are minisign verified",
     updateChannel: "Update channel",
+    updateChannelDesc: "Prerelease gives early access to new features, but may be less stable",
     updateChannelStable: "Stable",
     updateChannelBeta: "Prerelease",
     checkUpdate: "Check for updates",

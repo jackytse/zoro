@@ -134,6 +134,7 @@ export default {
     currentVersion: "目前版本",
     currentVersionDesc: "安裝包與更新清單由 CNB Release 託管，更新包經 minisign 簽章校驗",
     updateChannel: "更新頻道",
+    updateChannelDesc: "預發佈頻道可提前體驗新功能，但可能不夠穩定",
     updateChannelStable: "正式版",
     updateChannelBeta: "預發佈",
     checkUpdate: "檢測更新",

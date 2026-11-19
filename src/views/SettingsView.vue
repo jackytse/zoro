@@ -792,8 +792,8 @@ export default { name: "SettingsView" };
         <template #header>
           <p class="font-medium">{{ t("settings.aboutSection") }}</p>
         </template>
+        <!-- 当前行：左侧标题说明 + 右侧版本徽章与检测按钮，与其他设置行同构 -->
         <div class="flex items-center justify-between gap-4">
-          <!-- 左侧标题与说明：min-w-0 防止长描述把右侧控件组挤出界 -->
           <div class="min-w-0">
             <p class="text-sm font-medium">{{ t("settings.currentVersion") }}</p>
             <p class="mt-0.5 text-xs text-muted">{{ t("settings.currentVersionDesc") }}</p>
@@ -806,15 +806,6 @@ export default { name: "SettingsView" };
             >
               v{{ currentVersion || "—" }}
             </span>
-            <!-- 更新通道：切换即清空旧检测结果，需重新检测 -->
-            <USelect
-              :model-value="updateChannel"
-              :items="updateChannelItems"
-              size="sm"
-              class="w-28 shrink-0"
-              :aria-label="t('settings.updateChannel')"
-              @update:model-value="setChannel($event as UpdateChannel)"
-            />
             <!-- whitespace-nowrap：英文文案较长，禁止折行成两行按钮 -->
             <UButton
               size="sm"
@@ -828,6 +819,21 @@ export default { name: "SettingsView" };
               {{ t("settings.checkUpdate") }}
             </UButton>
           </div>
+        </div>
+        <!-- 通道行：独立成行，切换即清空旧检测结果，需重新检测 -->
+        <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
+          <div class="min-w-0">
+            <p class="text-sm font-medium">{{ t("settings.updateChannel") }}</p>
+            <p class="mt-0.5 text-xs text-muted">{{ t("settings.updateChannelDesc") }}</p>
+          </div>
+          <USelect
+            :model-value="updateChannel"
+            :items="updateChannelItems"
+            size="sm"
+            class="w-32 shrink-0"
+            :aria-label="t('settings.updateChannel')"
+            @update:model-value="setChannel($event as UpdateChannel)"
+          />
         </div>
         <!-- 动态状态行：检测/下载/出错后的结果与后续动作 -->
         <div

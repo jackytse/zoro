@@ -19,8 +19,27 @@ export default defineConfig({
     options: { typeAware: true, typeCheck: true },
   },
   // Nuxt UI 的 Vite 插件内部注册了 unplugin-auto-import / unplugin-vue-components，
-  // 会生成 auto-imports.d.ts、components.d.ts，因此必须和其他插件一起交给 lazyPlugins
-  plugins: lazyPlugins(() => [vue(), ui()]),
+  // 会生成 auto-imports.d.ts、components.d.ts，因此必须和其他插件一起交给 lazyPlugins。
+  // icon.clientBundle.scan：构建期扫描源码里用到的 i-lucide-* 图标并内联数据——
+  // 否则 UIcon 运行时从 api.iconify.design 拉取，被 tauri CSP 的 connect-src
+  // 'self' 拦截，打包版图标全部不显示（v0.1.12 实测）。
+  // globInclude 追加 Rust 源码：工具的默认图标名（ToolIcon 的 fallback-icon
+  // 来源）定义在 src-tauri/src/config.rs，不在前端扫描范围内
+  plugins: lazyPlugins(() => [
+    vue(),
+    ui({
+      icon: {
+        clientBundle: {
+          scan: {
+            globInclude: [
+              "**/*.{vue,jsx,tsx,md,mdc,mdx}",
+              "src-tauri/src/**/*.rs",
+            ],
+          },
+        },
+      },
+    }),
+  ]),
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

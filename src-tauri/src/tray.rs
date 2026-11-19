@@ -108,13 +108,15 @@ pub fn create_app_menu(app: &AppHandle) -> tauri::Result<()> {
     .try_state::<AppState>()
     .map(|s| s.config.lock().unwrap().locale().to_string())
     .unwrap_or_default();
-  let (settings_label, quit_label) = match locale.as_str() {
-    "zh-TW" => ("設定", "結束應用"),
-    "en" => ("Settings", "Quit App"),
-    _ => ("设置", "退出应用"),
+  let (settings_label, quit_label, close_label) = match locale.as_str() {
+    "zh-TW" => ("設定", "結束應用", "關閉視窗"),
+    "en" => ("Settings", "Quit App", "Close Window"),
+    _ => ("设置", "退出应用", "关闭窗口"),
   };
 
-  // 应用子菜单：设置 + 分隔线 + 退出（挂 Cmd+Q 快捷键，接管默认的立即退出）。
+  // 应用子菜单：设置 / 关闭窗口(Cmd+W) / 退出(Cmd+Q，二次确认)。
+  // 关闭窗口用系统预定义项：自带 Cmd+W 快捷键，走原生 performClose，
+  // 最终落入主窗口的 CloseRequested（只隐藏、进程驻留托盘）。
   // 数组元素是 MenuItem 与 PredefinedMenuItem 的混合类型，必须显式声明成
   // &dyn IsMenuItem 才能放进同一个切片
   let app_submenu = Submenu::with_items(
@@ -124,6 +126,8 @@ pub fn create_app_menu(app: &AppHandle) -> tauri::Result<()> {
     &[
       &MenuItem::with_id(app, "show-main", settings_label, true, None::<&str>)?
         as &dyn IsMenuItem<tauri::Wry>,
+      &PredefinedMenuItem::separator(app)? as &dyn IsMenuItem<tauri::Wry>,
+      &PredefinedMenuItem::close_window(app, Some(close_label))? as &dyn IsMenuItem<tauri::Wry>,
       &PredefinedMenuItem::separator(app)? as &dyn IsMenuItem<tauri::Wry>,
       &MenuItem::with_id(app, "app-quit", quit_label, true, Some("CmdOrCtrl+Q"))?
         as &dyn IsMenuItem<tauri::Wry>,

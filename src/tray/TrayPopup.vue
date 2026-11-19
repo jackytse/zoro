@@ -151,6 +151,13 @@ function onKeydown(event: KeyboardEvent) {
     void desktop.hideTrayPopup();
     return;
   }
+  // Cmd/Ctrl + W：与主窗口的「关闭窗口」快捷键对齐——弹窗是无边框窗口，
+  // 收不到应用菜单预定义项的 performClose，这里手动等价于 Esc 隐藏
+  if (event.key === "w" && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    void desktop.hideTrayPopup();
+    return;
+  }
   // Cmd/Ctrl + ,：macOS 通用「打开设置」快捷键，弹窗打开时也能直达设置窗口
   if (event.key === "," && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();

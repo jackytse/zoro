@@ -11,6 +11,7 @@ mod importer;
 mod opener;
 mod shortcut;
 mod tray;
+mod updater;
 
 use config::AppState;
 // RunEvent 仅 macOS/Windows 的 Reopen 分支消费，Linux 上必须裁掉导入
@@ -82,9 +83,11 @@ pub fn run() {
       // 原生目录选择对话框（添加项目时浏览目录用）
       app.handle().plugin(tauri_plugin_dialog::init())?;
 
-      // 应用自动更新：设置页「检测更新」经 updater 插件拉取签名更新包，
-      // 端点与公钥配置在 tauri.conf.json 的 plugins.updater 下；
-      // 更新产物（latest.json + 各平台带 .sig 的包）由 GitHub Actions 发布时生成
+      // 应用自动更新：更新分「正式版 / 预发布」双通道，检测与下载安装走
+      // 自定义命令（src/updater.rs，按通道覆盖端点），公钥等基础配置仍在
+      // tauri.conf.json 的 plugins.updater 下；
+      // 更新清单（latest.json / latest-beta.json + 各平台带 .sig 的包）由
+      // CNB 发布流水线的 ci/upload-release.sh 生成并推到 updater 孤儿分支
       app
         .handle()
         .plugin(tauri_plugin_updater::Builder::new().build())?;
@@ -152,6 +155,8 @@ pub fn run() {
       }
       _ => {}
     })
+    // 更新通道状态：updater_check 命中的 Update 在这里跨命令传递
+    .manage(updater::PendingUpdate::default())
     .invoke_handler(tauri::generate_handler![
       commands::get_config,
       commands::scan_recent_projects,
@@ -170,6 +175,8 @@ pub fn run() {
       commands::show_main_window,
       commands::hide_tray_popup,
       commands::quit_app,
+      updater::updater_check,
+      updater::updater_download_and_install,
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")

@@ -35,6 +35,9 @@ tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 # 配套 process：更新安装完成后重启应用使新版本生效
 tauri-plugin-process = "2"
+# 更新通道端点构造（updater_builder().endpoints() 需要 url::Url；
+# 该 crate 已在 tauri 依赖树中，显式声明仅为直接引用）
+url = "2"
 
 # macOS：直接访问 NSStatusItem / NSScreen，取托盘图标的权威位置，
 # 解决多显示器混合缩放下按几何推算定位弹窗失效的问题

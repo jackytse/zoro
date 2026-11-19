@@ -7,7 +7,7 @@ import { applyLocale, resolveLocale, LOCALE_LABELS, type AppLocale } from "../i1
 import ToolIcon from "../components/ToolIcon.vue";
 import OverlayScrollbar from "../components/OverlayScrollbar.vue";
 import { useNotify } from "../composables/useNotify";
-import { useUpdater } from "../composables/useUpdater";
+import { useUpdater, type UpdateChannel } from "../composables/useUpdater";
 import { formatRelativeTime } from "../utils/time";
 
 const notify = useNotify();
@@ -450,17 +450,25 @@ async function toggleAutostart(enabled: boolean) {
  */
 const {
   phase: updatePhase,
+  channel: updateChannel,
   currentVersion,
   newVersion: updateNewVersion,
   progress: updateProgress,
   errorMessage: updateError,
   isChecking,
   loadCurrentVersion,
+  setChannel,
   checkForUpdate,
   downloadAndInstall,
   restartApp,
   formatMB,
 } = useUpdater();
+
+/** 更新通道选项：正式版随发版节奏，预发布抢鲜但有稳定性风险 */
+const updateChannelItems = computed(() => [
+  { label: t("settings.updateChannelStable"), value: "stable" },
+  { label: t("settings.updateChannelBeta"), value: "beta" },
+]);
 
 /** 检测更新；失败时状态行给结论、toast 给原因 */
 async function handleCheckUpdate() {
@@ -790,6 +798,15 @@ export default { name: "SettingsView" };
             <p class="mt-0.5 text-xs text-muted">{{ t("settings.currentVersionDesc") }}</p>
           </div>
           <div class="flex items-center gap-3">
+            <!-- 更新通道：切换即清空旧检测结果，需重新检测 -->
+            <USelect
+              :model-value="updateChannel"
+              :items="updateChannelItems"
+              size="sm"
+              class="w-32 shrink-0"
+              :aria-label="t('settings.updateChannel')"
+              @update:model-value="setChannel($event as UpdateChannel)"
+            />
             <!-- 版本号来自 tauri.conf.json，等宽数字更整齐 -->
             <span class="font-mono text-sm text-dimmed">{{ currentVersion || "—" }}</span>
             <UButton

@@ -144,7 +144,10 @@ export default {
     // 关于与更新
     aboutSection: "关于与更新",
     currentVersion: "当前版本",
-    currentVersionDesc: "应用安装包由 GitHub Release 托管，更新包经 minisign 签名校验",
+    currentVersionDesc: "安装包与更新清单由 CNB Release 托管，更新包经 minisign 签名校验",
+    updateChannel: "更新通道",
+    updateChannelStable: "正式版",
+    updateChannelBeta: "预发布",
     checkUpdate: "检测更新",
     upToDate: "已是最新版本",
     newVersionFound: "发现新版本 v{version}",
@@ -154,6 +157,6 @@ export default {
     restart: "重启应用",
     updateCheckFailed: "检测更新失败",
     updateInstallFailed: "下载或安装更新失败",
-    updateSourceUnavailable: "更新源暂不可用：还没有包含更新清单的正式发布（更新包由 GitHub Release 托管）",
+    updateSourceUnavailable: "更新源暂不可用：当前通道还没有包含更新清单的发布（更新清单托管在 CNB 仓库 updater 分支）",
   },
 } as const;

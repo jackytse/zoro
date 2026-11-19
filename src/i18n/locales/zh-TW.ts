@@ -132,7 +132,10 @@ export default {
     // 關於與更新
     aboutSection: "關於與更新",
     currentVersion: "目前版本",
-    currentVersionDesc: "應用安裝包由 GitHub Release 託管，更新包經 minisign 簽章校驗",
+    currentVersionDesc: "安裝包與更新清單由 CNB Release 託管，更新包經 minisign 簽章校驗",
+    updateChannel: "更新頻道",
+    updateChannelStable: "正式版",
+    updateChannelBeta: "預發佈",
     checkUpdate: "檢測更新",
     upToDate: "已是最新版本",
     newVersionFound: "發現新版本 v{version}",
@@ -142,6 +145,6 @@ export default {
     restart: "重啟應用",
     updateCheckFailed: "檢測更新失敗",
     updateInstallFailed: "下載或安裝更新失敗",
-    updateSourceUnavailable: "更新源暫不可用：還沒有包含更新清單的正式發布（更新包由 GitHub Release 託管）",
+    updateSourceUnavailable: "更新源暫不可用：當前頻道還沒有包含更新清單的發布（更新清單託管在 CNB 倉庫 updater 分支）",
   },
 } as const;

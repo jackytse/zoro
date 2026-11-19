@@ -1,10 +1,15 @@
 /**
- * 应用自动更新。
+ * 应用自动更新（多通道）。
  *
- * 底层是 Tauri updater 插件（@tauri-apps/plugin-updater）：更新元数据从
- * GitHub Releases 的 latest.json 拉取（端点配置在 tauri.conf.json 的
- * plugins.updater），更新包带 minisign 签名，前端只负责「检测 → 确认 →
- * 下载安装 → 重启」这条状态机；进度通过 downloadAndInstall 的事件回调累计。
+ * 更新通道分「正式版 stable」与「预发布 beta」，由用户在设置页选择，
+ * 选择持久化在 localStorage（key: zoro.update-channel）。检测与下载安装
+ * 走自定义 Tauri 命令（src-tauri/src/updater.rs）——JS 端 plugin-updater
+ * 的 check() 只能用 tauri.conf.json 的固定端点，无法按通道切换清单文件：
+ *   - stable → /-/raw/updater/latest.json
+ *   - beta   → /-/raw/updater/latest-beta.json
+ * 更新包带 minisign 签名（公钥在 tauri.conf.json），前端只负责
+ * 「检测 → 确认 → 下载安装 → 重启」这条状态机；下载进度由 Rust 侧经
+ * updater://progress 事件推送（payload = [分块字节增量, 总大小]）。
  *
  * 阶段流转：
  *   idle → checking → latest（已是最新）| available（发现新版本）
@@ -13,13 +18,27 @@
  */
 import { computed, ref } from "vue";
 import { getVersion } from "@tauri-apps/api/app";
-import { check, type Update } from "@tauri-apps/plugin-updater";
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
+
+/** 更新通道：stable 正式版 / beta 预发布（各对应一份更新清单） */
+export type UpdateChannel = "stable" | "beta";
+
+/** 通道选择的 localStorage 键（跨会话记住用户的通道偏好） */
+const CHANNEL_KEY = "zoro.update-channel";
+
+/** Rust updater_check 命令返回的检测摘要（字段名跟 serde camelCase 对齐） */
+interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes: string | null;
+}
 
 /** 更新流程阶段（供 UI 状态机渲染） */
 export type UpdatePhase =
   | "idle" // 初始态，还没检测过
-  | "checking" // 正在请求 latest.json 比对版本
+  | "checking" // 正在请求更新清单比对版本
   | "latest" // 已是最新版本
   | "available" // 发现新版本，等用户确认
   | "downloading" // 下载（Windows 上下载完会顺带静默安装）
@@ -32,11 +51,19 @@ export interface DownloadProgress {
   total: number | null;
 }
 
+/** 读取用户上次选择的更新通道；没有记录或值非法都回落到正式版 */
+function loadChannel(): UpdateChannel {
+  const stored = localStorage.getItem(CHANNEL_KEY);
+  return stored === "beta" ? "beta" : "stable";
+}
+
 export function useUpdater() {
   const phase = ref<UpdatePhase>("idle");
+  /** 当前更新的通道（切换后旧检测结果作废，需重新检测） */
+  const channel = ref<UpdateChannel>(loadChannel());
   /** 当前应用版本（来自 tauri.conf.json 的 version，经核心 app 插件读取） */
   const currentVersion = ref("");
-  /** 新版本号（check() 命中时回填） */
+  /** 新版本号（检测命中时回填） */
   const newVersion = ref("");
   /** 检测或下载阶段的错误信息（String(error)） */
   const errorMessage = ref("");
@@ -47,10 +74,10 @@ export function useUpdater() {
   const isDownloading = computed(() => phase.value === "downloading");
 
   /**
-   * check() 返回的 Update 对象要跨阶段持有：检测、确认、下载安装是
-   * 同一次会话里的同一个实例（内部记录了目标版本与下载地址），不能丢
+   * 检测命中标记：available 阶段才允许进入 downloading。
+   * Update 实例本体留在 Rust 的 PendingUpdate 状态里，前端只记「有没有」
    */
-  let pendingUpdate: Update | null = null;
+  let hasPendingUpdate = false;
 
   /** 读取当前版本号；失败不阻塞页面，版本位留空即可 */
   async function loadCurrentVersion() {
@@ -62,22 +89,37 @@ export function useUpdater() {
     }
   }
 
-  /** 检测更新：请求端点的 latest.json 与当前版本比对 */
+  /** 切换更新通道：清空旧检测结果回到初始态，用户重新检测生效 */
+  function setChannel(next: UpdateChannel) {
+    if (next === channel.value) return;
+    channel.value = next;
+    localStorage.setItem(CHANNEL_KEY, next);
+    phase.value = "idle";
+    hasPendingUpdate = false;
+    newVersion.value = "";
+    errorMessage.value = "";
+    progress.value = { downloaded: 0, total: null };
+  }
+
+  /** 检测更新：请求当前通道的更新清单与当前版本比对 */
   async function checkForUpdate() {
     phase.value = "checking";
     errorMessage.value = "";
     try {
-      const update = await check();
-      if (update) {
-        pendingUpdate = update;
-        newVersion.value = update.version;
+      const info = await invoke<UpdateInfo | null>("updater_check", {
+        channel: channel.value,
+      });
+      if (info) {
+        hasPendingUpdate = true;
+        newVersion.value = info.version;
         phase.value = "available";
       } else {
-        pendingUpdate = null;
+        hasPendingUpdate = false;
+        newVersion.value = "";
         phase.value = "latest";
       }
     } catch (error) {
-      // 常见原因：无网络、端点 404（还没有带 latest.json 的 release）
+      // 常见原因：无网络、清单 404（该通道还没有任何发布）
       errorMessage.value = String(error);
       phase.value = "error";
     }
@@ -85,32 +127,28 @@ export function useUpdater() {
 
   /** 确认后下载并安装更新；Windows NSIS 走 passive 静默装，macOS 替换 .app */
   async function downloadAndInstall() {
-    if (!pendingUpdate) return;
+    if (!hasPendingUpdate) return;
     phase.value = "downloading";
     progress.value = { downloaded: 0, total: null };
+    // 事件订阅先于下载启动，避免早期分块丢失；finally 里必须退订
+    let unlisten: UnlistenFn | null = null;
     try {
-      await pendingUpdate.downloadAndInstall((event) => {
-        switch (event.event) {
-          // 内容总长度（可能拿不到，比如服务端没回 Content-Length）
-          case "Started":
-            progress.value = { ...progress.value, total: event.data.contentLength ?? null };
-            break;
-          // 分块累计：updater 按流式下载，逐块累加得到已下载字节数
-          case "Progress":
-            progress.value = {
-              ...progress.value,
-              downloaded: progress.value.downloaded + event.data.chunkLength,
-            };
-            break;
-          // Finished 不用单独处理，downloadAndInstall resolve 即安装完成
-          case "Finished":
-            break;
-        }
+      unlisten = await listen<[number, number | null]>("updater://progress", (event) => {
+        const [chunk, total] = event.payload;
+        progress.value = {
+          // Rust 侧发的是「本次分块字节增量」，逐块累加得到已下载量
+          downloaded: progress.value.downloaded + chunk,
+          // 总大小可能拿不到（服务端没回 Content-Length），拿到才更新
+          total: total ?? progress.value.total,
+        };
       });
+      await invoke("updater_download_and_install");
       phase.value = "ready";
     } catch (error) {
       errorMessage.value = String(error);
       phase.value = "error";
+    } finally {
+      unlisten?.();
     }
   }
 
@@ -126,6 +164,7 @@ export function useUpdater() {
 
   return {
     phase,
+    channel,
     currentVersion,
     newVersion,
     errorMessage,
@@ -133,6 +172,7 @@ export function useUpdater() {
     isChecking,
     isDownloading,
     loadCurrentVersion,
+    setChannel,
     checkForUpdate,
     downloadAndInstall,
     restartApp,

@@ -136,7 +136,10 @@ export default {
     // About & updates
     aboutSection: "About & Updates",
     currentVersion: "Current version",
-    currentVersionDesc: "Installers are hosted on GitHub Releases; updates are minisign verified",
+    currentVersionDesc: "Installers and update manifests are hosted on CNB Releases; updates are minisign verified",
+    updateChannel: "Update channel",
+    updateChannelStable: "Stable",
+    updateChannelBeta: "Prerelease",
     checkUpdate: "Check for updates",
     upToDate: "You're up to date",
     newVersionFound: "New version v{version} available",
@@ -146,6 +149,6 @@ export default {
     restart: "Restart app",
     updateCheckFailed: "Failed to check for updates",
     updateInstallFailed: "Failed to download or install the update",
-    updateSourceUnavailable: "Update source unavailable: no release with an update manifest yet (updates are hosted on GitHub Releases)",
+    updateSourceUnavailable: "Update source unavailable: no release with an update manifest yet in this channel (manifests are hosted on the CNB updater branch)",
   },
 } as const;

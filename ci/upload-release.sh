@@ -16,9 +16,11 @@
 #   - 所有请求显式检查状态码并在失败时打印响应体：CI 日志里能直接看到
 #     4xx/5xx 的原因，而不是 curl -f 静默退出码；
 #   - 附件上传完会后尝试「更新清单 finalize」：从 release 附件里收集各平台
-#     更新包的 .sig 签名，生成 latest.json 并 force push 到仓库 updater 分支
-#     ——应用内 updater 的端点就是
-#     https://cnb.cool/<repo>/-/raw/updater/latest.json（见 tauri.conf.json）。
+#     更新包的 .sig 签名，按通道生成更新清单并 force push 到仓库 updater 分支
+#     ——应用内 updater 分「正式版 / 预发布」双通道（见 src-tauri/src/updater.rs），
+#     端点分别为
+#     https://cnb.cool/<repo>/-/raw/updater/latest.json（正式版）
+#     https://cnb.cool/<repo>/-/raw/updater/latest-beta.json（预发布）。
 #     三平台流水线并行，谁最后完成谁写入最全的清单；单平台失败时清单里
 #     缺该平台条目，对应平台用户表现为「无更新」，不影响其他平台升级。
 set -euo pipefail
@@ -177,15 +179,21 @@ finalize_updater_manifest() {
   done < "$SIG_DIR/list.txt"
   echo "finalize: 下载到 $count 个签名文件"
 
-  # ---- 4.2 组装 latest.json（只收录「包 + 签名」都存在的平台） ----
+  # ---- 4.2 组装本 release 的清单体（双通道共用同一份平台数据） ----
   # URL 统一写 cnb.cool 域名：匿名可下载（api.cnb.cool 需 token，客户端没有）
-  local OUT="$SIG_DIR/latest.json"
+  # 通道规则（与 src-tauri/src/updater.rs 的通道端点对应）：
+  #   - 正式版通道 → latest.json
+  #   - 预发布通道 → latest-beta.json
+  #   - 正式 tag（vX.Y.Z）：两个清单都写成本 release——预发布用户在
+  #     semver 下只会「升」到更高的正式版，不会被动回退；
+  #   - 预发布 tag（含连字符，如 v0.1.6-beta.1）：只写预发布清单，
+  #     避免预发布版本污染正式版通道。
+  local OUT="$SIG_DIR/release-meta.json"
   node -e '
     const fs = require("fs");
     const dir = process.argv[1], tag = process.argv[2], slug = process.argv[3];
     const base = "https://cnb.cool/" + slug + "/-/releases/download/" + tag;
     const sig = (name) => fs.readFileSync(dir + "/" + name + ".sig", "utf8").trim();
-    const has = (name) => fs.existsSync(dir + "/" + name) && fs.existsSync(dir + "/" + name + ".sig");
     // Linux 唯一支持应用内更新的 bundle 是 AppImage；mac 是 .app.tar.gz；
     // Windows 是 NSIS setup.exe（msi 面向企业部署，不进更新链路）
     const candidates = [
@@ -207,34 +215,55 @@ finalize_updater_manifest() {
       pub_date: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
       platforms,
     };
-    fs.writeFileSync(dir + "/latest.json", JSON.stringify(meta, null, 2));
+    fs.writeFileSync(dir + "/release-meta.json", JSON.stringify(meta, null, 2));
     console.log(JSON.stringify(meta.platforms, null, 2));
   ' "$SIG_DIR" "$TAG" "$REPO_SLUG" || {
-    echo "WARN: finalize 跳过（latest.json 组装失败）" >&2
+    echo "WARN: finalize 跳过（更新清单组装失败）" >&2
     rm -rf "$SIG_DIR"; return 0
   }
 
-  # ---- 4.3 force push 到 updater 分支（孤儿分支，只含 latest.json 一个文件） ----
-  # CNB 没有 GitHub 那样的 releases/latest/download 固定别名，所以用一个
-  # 永远指向最新清单的专用分支充当「latest」；raw 地址即 updater 端点。
   if [[ "$(node -p "Object.keys(JSON.parse(require('fs').readFileSync('$OUT')).platforms).length")" -eq 0 ]]; then
     echo "WARN: finalize 跳过（无任何平台更新包，通常意味着签名密钥未配置或打包失败）" >&2
     rm -rf "$SIG_DIR"; return 0
   fi
 
+  # ---- 4.3 更新 updater 分支（孤儿分支：latest.json 正式 / latest-beta.json 预发布） ----
+  # CNB 没有 GitHub 那样的 releases/latest/download 固定别名，所以用一个
+  # 专用分支承载更新清单；raw 地址即 updater 端点。
+  # 先尝试克隆现有分支：预发布 tag 时要原样保留 latest.json（正式通道不被
+  # 预发布数据覆盖）；分支不存在则当首次发布，从零初始化。
   local PUSH_DIR
   PUSH_DIR="$(mktemp -d)"
+  local push_url="https://${CNB_TOKEN_USER_NAME:-cnb}:${CNB_TOKEN}@cnb.cool/${REPO_SLUG}.git"
+  if git clone -q --depth 1 -b updater "$push_url" "$PUSH_DIR" 2>/dev/null; then
+    echo "✓ 已拉取现有 updater 分支（双通道合并）"
+  else
+    git init -q -b updater "$PUSH_DIR"
+    echo "updater 分支不存在，按首次发布初始化"
+  fi
+
+  if [[ "$TAG" == *-* ]]; then
+    # 预发布 tag：只更新预发布清单
+    cp "$OUT" "$PUSH_DIR/latest-beta.json"
+    if [[ ! -f "$PUSH_DIR/latest.json" ]]; then
+      echo "WARN: 正式通道清单尚不存在（首个正式 tag 发布时生成，预发布通道不受影响）" >&2
+    fi
+  else
+    # 正式 tag：两个通道都指向本 release
+    cp "$OUT" "$PUSH_DIR/latest.json"
+    cp "$OUT" "$PUSH_DIR/latest-beta.json"
+  fi
+
   if (
     cd "$PUSH_DIR" &&
-    git init -q -b updater &&
-    cp "$OUT" latest.json &&
-    git -c user.name="cnb-ci" -c user.email="ci@cnb.cool" add latest.json &&
-    git -c user.name="cnb-ci" -c user.email="ci@cnb.cool" commit -q -m "chore: latest.json for $TAG" &&
-    git push -q --force \
-      "https://${CNB_TOKEN_USER_NAME:-cnb}:${CNB_TOKEN}@cnb.cool/${REPO_SLUG}.git" \
-      HEAD:refs/heads/updater
+    git add -A &&
+    git -c user.name="cnb-ci" -c user.email="ci@cnb.cool" \
+      commit -q -m "chore: updater manifest for $TAG" &&
+    git push -q --force "$push_url" HEAD:refs/heads/updater
   ) 2>/dev/null; then
-    echo "✓ 更新清单已发布: https://cnb.cool/$REPO_SLUG/-/raw/updater/latest.json"
+    echo "✓ 更新清单已发布:"
+    echo "    正式版: https://cnb.cool/$REPO_SLUG/-/raw/updater/latest.json"
+    echo "    预发布: https://cnb.cool/$REPO_SLUG/-/raw/updater/latest-beta.json"
   else
     echo "WARN: updater 分支推送失败（清单保留在 $SIG_DIR，可手动检查）" >&2
     return 0

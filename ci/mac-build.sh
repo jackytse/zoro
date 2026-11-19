@@ -53,14 +53,31 @@ fi
 # 覆盖配置写成临时文件再传 --config <路径>：tauri CLI 的 --bundles 是变长参数，
 # 命令尾部追加内联 JSON 会被 --bundles 吞掉（v0.1.5 tag 流水线实测报
 # invalid value ... for '--bundles'）；文件路径无空格无引号，拼接安全。
-UPDATER_CONFIG=""
+# 签名覆盖（v0.1.10 的「damaged」教训）：tauri.conf.json 默认
+# signingIdentity "-"（ad-hoc），让 bundler 在封装 dmg / tar.gz **之前**先
+# codesign——此前 dmg/tar.gz 里是未签名 .app，下载后被 Gatekeeper 判损坏。
+# 节点钥匙串装有真证书时设 CODESIGN_IDENTITY 覆盖（如 Apple Development）。
+BUILD_OVERRIDES="{}"
+if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
+  BUILD_OVERRIDES=$(printf '{"bundle":{"macOS":{"signingIdentity":"%s"}}}' "$CODESIGN_IDENTITY")
+  echo "使用证书签名: $CODESIGN_IDENTITY"
+else
+  echo "无 CODESIGN_IDENTITY，使用 tauri.conf.json 的默认 ad-hoc 签名"
+fi
 if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
-  echo '{"bundle":{"createUpdaterArtifacts":true}}' > .tauri-updater-config.json
-  UPDATER_CONFIG="--config .tauri-updater-config.json"
+  # 两个覆盖合并进同一份 config：--config 可多次传但按深度合并不如一次给全
+  BUILD_OVERRIDES=$(python3 -c '
+import json, sys
+cfg = json.loads(sys.argv[1])
+cfg["bundle"]["createUpdaterArtifacts"] = True
+print(json.dumps(cfg))
+' "$BUILD_OVERRIDES")
   echo "检测到签名密钥，开启应用内更新产物"
 else
   echo "未配置 TAURI_SIGNING_PRIVATE_KEY，跳过更新包签名（应用内更新将无 macOS 条目）"
 fi
+printf '%s' "$BUILD_OVERRIDES" > .tauri-updater-config.json
+UPDATER_CONFIG="--config .tauri-updater-config.json"
 
 # tauri build 会先跑 beforeBuildCommand（pnpm build）再编译 release；
 # --bundles app,dmg 同时产出应用包与磁盘映像，一次编译不浪费。
@@ -100,21 +117,42 @@ ls "$BIN" | grep -v '\.app' >/dev/null || {
   exit 1
 }
 
-# ---------- 4. 签名 ----------
-# tauri 的 mac 打包默认不做 codesign；这里统一补一次。
-# --force 覆盖已有签名，--deep 连同内嵌 frameworks 一起签（ad-hoc 场景够用）。
-IDENTITY="${CODESIGN_IDENTITY:--}"
-echo "codesign identity: ${CODESIGN_IDENTITY:-ad-hoc}"
-codesign --force --deep --sign "$IDENTITY" "$APP"
-
-# --verify --strict：确认签名结构完整；返回非零直接退出
+# ---------- 4. 签名校验 ----------
+# 签名由 bundler 在打包期完成（tauri.conf.json 的 signingIdentity，或上面的
+# CODESIGN_IDENTITY 覆盖），发生在 dmg / tar.gz 封装之前——v0.1.10 的教训：
+# 此前是打包「后」补签，dmg/tar.gz 里装的是未签名 .app，下载后被
+# Gatekeeper 判「damaged」。这里只验证，签名缺失/失效直接终止。
+if [[ ! -d "$APP/Contents/_CodeSignature" ]]; then
+  echo ".app 缺少 _CodeSignature（bundler 未签名），请检查 signingIdentity 配置" >&2
+  exit 1
+fi
 codesign --verify --strict --verbose=2 "$APP" >/dev/null
 echo "✓ codesign 校验通过"
+
+# 热更新包同理：tar.gz 里的 .app 必须已签名（应用内更新替换 /Applications
+# 下的 .app 后若签名损坏，同样会触发「damaged」）
+UPDATER_TAR_CANDIDATE="$APP_DIR/zoro.app.tar.gz"
+if [[ -f "$UPDATER_TAR_CANDIDATE" ]]; then
+  TAR_VERIFY_DIR=$(mktemp -d)
+  tar -xzf "$UPDATER_TAR_CANDIDATE" -C "$TAR_VERIFY_DIR"
+  codesign --verify --strict "$TAR_VERIFY_DIR"/*.app >/dev/null
+  rm -rf "$TAR_VERIFY_DIR"
+  echo "✓ 热更新包内 .app 签名有效"
+fi
 
 # ---------- 5. .dmg 校验 ----------
 # hdiutil imageinfo 能读出映像元数据即说明 dmg 结构完好（比只查文件存在强）
 hdiutil imageinfo "$DMG" >/dev/null
 echo "✓ dmg 映像完整"
+
+# dmg 内容签名验证：挂载镜像，验证里面 .app 的签名——这是用户「下载 dmg
+# → 双击安装」的真实路径，外层 .app 校验通过不代表 dmg 里那份没被动过
+DMG_VERIFY_DIR=$(mktemp -d)
+hdiutil attach -nobrowse -readonly -mountpoint "$DMG_VERIFY_DIR" "$DMG" >/dev/null
+codesign --verify --strict "$DMG_VERIFY_DIR"/*.app >/dev/null
+hdiutil detach "$DMG_VERIFY_DIR" >/dev/null
+rm -rf "$DMG_VERIFY_DIR"
+echo "✓ dmg 内 .app 签名有效"
 
 # ---------- 6. 产物指纹留档 ----------
 du -h "$APP"

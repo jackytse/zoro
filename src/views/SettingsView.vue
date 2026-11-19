@@ -116,13 +116,15 @@ async function loadConfig() {
 
 /* ---------- 通用设置：外观（主题 / 语言） ---------- */
 
-/** 主题：跟随系统（默认）/ 浅色 / 深色；"system" 映射为后端的 null */
+/** 主题：跟随系统（默认）/ 浅色 / 深色；"system" 映射为后端的 null。
+ *  选项文案必须包成 computed：setup 时的常量数组只会在 t() 求值一次，
+ *  切换语言后下拉项不会跟着翻译（locale 变化触发重算） */
 const themeValue = computed(() => config.value?.theme ?? "system");
-const themeOptions = [
+const themeOptions = computed(() => [
   { label: t("settings.themeSystem"), value: "system", icon: "i-lucide-monitor" },
   { label: t("settings.themeLight"), value: "light", icon: "i-lucide-sun" },
   { label: t("settings.themeDark"), value: "dark", icon: "i-lucide-moon" },
-];
+]);
 
 /** 切换主题；广播后两个窗口同步生效。失败时重新拉取配置以回弹 */
 async function setTheme(value: string) {
@@ -134,15 +136,16 @@ async function setTheme(value: string) {
   }
 }
 
-/** 跟随系统 + 三个显式语言选项；"follow" 映射为后端的 null */
+/** 跟随系统 + 三个显式语言选项；"follow" 映射为后端的 null。
+ *  同样包成 computed：「跟随系统」文案随 locale 变化重新翻译 */
 const languageValue = computed(() => config.value?.locale ?? "follow");
-const languageOptions = [
+const languageOptions = computed(() => [
   { label: t("settings.followSystem"), value: "follow" },
   ...(Object.keys(LOCALE_LABELS) as AppLocale[]).map((l) => ({
     label: LOCALE_LABELS[l],
     value: l,
   })),
-];
+]);
 
 /** 切换界面语言；后端广播后两个窗口都会通过 loadConfig 同步生效 */
 async function setLanguage(value: string) {

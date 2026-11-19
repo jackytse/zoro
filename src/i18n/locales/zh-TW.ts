@@ -40,7 +40,7 @@ export default {
 
     addProject: "新增專案",
     projectName: "專案名稱",
-    nameHint: "留空則取資料夾名稱",
+    nameHint: "留空時自動取路徑末段作為專案名稱",
     namePlaceholder: "我的專案",
     tool: "開發工具",
     projectPath: "專案路徑",

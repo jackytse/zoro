@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { open } from "@tauri-apps/plugin-dialog";
 import { desktop, type DesktopConfig, type DetectedProject, type Project } from "../api/desktop";
@@ -38,6 +38,29 @@ const form = ref({
   toolId: "vscode",
 });
 const isSubmitting = ref(false);
+
+/** 从路径末段推断项目名：最后一个分隔符（/ 或 \）后的内容。
+ *  尾部斜杠要先剥掉——「…/demo/」和「…/demo」应得到同一个名字；
+ *  同时兼容 Windows 反斜杠路径（目录选择器在 Windows 上返回 \ 分隔） */
+function inferNameFromPath(path: string): string {
+  const trimmed = path.trim().replace(/[\\/]+$/, "");
+  if (!trimmed) return "";
+  const lastSep = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return trimmed.slice(lastSep + 1);
+}
+
+// 名称留空时，输入路径 / 选择目录后自动用末段回填项目名。
+// 为什么用 watch 而不在 browseFolder 里做：手动输入路径同样需要回填，
+// 且 watch 只监听 form.path 一处来源，两个入口天然共享同一份逻辑；
+// 名称非空（用户自己起了名）时绝不覆盖。
+watch(
+  () => form.value.path,
+  (path) => {
+    if (form.value.name.trim()) return;
+    const inferred = inferNameFromPath(path);
+    if (inferred) form.value.name = inferred;
+  },
+);
 
 /** 表单校验：路径必填、必须选择工具 */
 const formError = computed(() => {

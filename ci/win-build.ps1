@@ -191,7 +191,7 @@ if ($HasNsis) {
     $Nsis = Get-ChildItem -Path (Join-Path $BundleDir "nsis") -Filter "*.exe" -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($Nsis) {
-        $Name = "zoro_${Version}_windows_amd64-setup.exe"
+        $Name = "zoro-${Version}-windows-amd64-setup.exe"
         Copy-Item $Nsis.FullName (Join-Path $AssetDir $Name)
         $Assets += $Name
         Write-Host ("产物: {0} ({1:N1} MB)" -f $Nsis.FullName, ($Nsis.Length / 1MB))
@@ -209,7 +209,7 @@ if ($HasMsi) {
     $Msi = Get-ChildItem -Path (Join-Path $BundleDir "msi") -Filter "*.msi" -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($Msi) {
-        $Name = "zoro_${Version}_windows_amd64.msi"
+        $Name = "zoro-${Version}-windows-amd64.msi"
         Copy-Item $Msi.FullName (Join-Path $AssetDir $Name)
         $Assets += $Name
         Write-Host ("产物: {0} ({1:N1} MB)" -f $Msi.FullName, ($Msi.Length / 1MB))
@@ -244,7 +244,7 @@ Zoro ${Version} (Windows 便携版)
   - 首次运行后，配置文件位于 %APPDATA%\me.jackytse.zoro\config.json。
 "@
     $Readme | Out-File (Join-Path $Stage "README.txt") -Encoding utf8
-    $ZipName = "zoro_${Version}_windows_amd64.zip"
+    $ZipName = "zoro-${Version}-windows-amd64.zip"
     Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath (Join-Path $AssetDir $ZipName) -Force
     $Assets += $ZipName
     Write-Host "产物: $ZipName（便携版）"

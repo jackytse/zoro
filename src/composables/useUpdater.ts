@@ -5,8 +5,8 @@
  * 选择持久化在 localStorage（key: zoro.update-channel）。检测与下载安装
  * 走自定义 Tauri 命令（src-tauri/src/updater.rs）——JS 端 plugin-updater
  * 的 check() 只能用 tauri.conf.json 的固定端点，无法按通道切换清单文件：
- *   - stable → /-/raw/updater/latest.json
- *   - beta   → /-/raw/updater/latest-beta.json
+ *   - stable → /-/releases/download/updater-manifest/latest.json
+ *   - beta   → /-/releases/download/updater-manifest/latest-beta.json
  * 更新包带 minisign 签名（公钥在 tauri.conf.json），前端只负责
  * 「检测 → 确认 → 下载安装 → 重启」这条状态机；下载进度由 Rust 侧经
  * updater://progress 事件推送（payload = [分块字节增量, 总大小]）。
@@ -17,10 +17,13 @@
  *   任意阶段出错 → error（保留错误信息，可重新检测）
  */
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { useToast } from "@nuxt/ui/composables";
+import { useNotify } from "./useNotify";
 
 /** 更新通道：stable 正式版 / beta 预发布（各对应一份更新清单） */
 export type UpdateChannel = "stable" | "beta";
@@ -178,4 +181,68 @@ export function useUpdater() {
     restartApp,
     formatMB,
   };
+}
+
+/**
+ * 启动自动检测更新：应用挂载后延迟几秒静默检测一次，发现新版本时
+ * 用 toast 提示用户并提供「立即更新」按钮（下载完成再提示重启）。
+ *
+ * 为什么单独一个入口而不是把检测塞进 useUpdater：useUpdater 每次调用
+ * 都生成一套独立的响应式状态（供设置页渲染进度），App 层若复用同一个
+ * composable 会出现两套互不相干的状态。自动检测只需要「发现→提示→
+ * 触发」这条一次性链路，独立实例 + 模块级守卫标记最简单。
+ */
+
+/** 守卫标记：整个应用生命周期内只自动检测一次（热重载也不重复弹） */
+let startupCheckScheduled = false;
+
+/** 启动检测的延迟毫秒数：给主界面加载让路，避免开机就抢网络/弹窗 */
+const AUTO_CHECK_DELAY_MS = 5000;
+
+export function useStartupUpdateCheck() {
+  // App.vue 的 onMounted 里调用；重复调用直接忽略（守卫标记已置位）
+  if (startupCheckScheduled) return;
+  startupCheckScheduled = true;
+
+  const { phase, newVersion, errorMessage, checkForUpdate, downloadAndInstall, restartApp } =
+    useUpdater();
+  const { t } = useI18n();
+  const toast = useToast();
+
+  /** toast「立即更新」按钮回调：开始下载，完成后提示重启（失败弹错误） */
+  async function installFromToast() {
+    await downloadAndInstall();
+    if (phase.value === "ready") {
+      // 下载安装完成：提示用户重启。不自动重启——让用户保存好手头工作
+      toast.add({
+        title: t("settings.installedRestart"),
+        color: "success",
+        icon: "i-lucide-circle-check",
+        duration: 0, // 不自动消失，等用户决定
+        actions: [{ label: t("settings.restart"), onClick: () => void restartApp() }],
+      });
+    } else if (phase.value === "error") {
+      toast.add({
+        title: t("settings.updateInstallFailed"),
+        description: errorMessage.value,
+        color: "error",
+        icon: "i-lucide-circle-alert",
+      });
+    }
+  }
+
+  setTimeout(() => {
+    void checkForUpdate().then(() => {
+      // 静默检测只对「发现新版本」出声：已是最新/出错（无网、清单 404）
+      // 都不打扰用户，用户想看细节去设置页手动检测
+      if (phase.value !== "available") return;
+      toast.add({
+        title: t("settings.newVersionFound", { version: newVersion.value }),
+        color: "info",
+        icon: "i-lucide-arrow-up-circle",
+        duration: 0, // 更新提示不自动消失，避免用户没看到就错过
+        actions: [{ label: t("settings.updateNow"), onClick: () => void installFromToast() }],
+      });
+    });
+  }, AUTO_CHECK_DELAY_MS);
 }

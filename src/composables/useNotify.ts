@@ -25,12 +25,17 @@ export function useNotify() {
    * 弹一条 toast。
    * @param type 通知类型，决定颜色与图标
    * @param title 主文案
-   * @param opts 可选：详细描述（错误原因等）、自定义展示时长（毫秒）
+   * @param opts 可选：详细描述（错误原因等）、自定义展示时长（毫秒）、
+   *             操作按钮（如「立即更新」，点击执行回调后可自行再弹后续通知）
    */
   function notify(
     type: NotifyType,
     title: string,
-    opts?: { description?: string; duration?: number },
+    opts?: {
+      description?: string;
+      duration?: number;
+      actions?: { label: string; onClick: () => void | Promise<void> }[];
+    },
   ) {
     toast.add({
       title,
@@ -38,6 +43,7 @@ export function useNotify() {
       duration: opts?.duration,
       color: type,
       icon: NOTIFY_ICONS[type],
+      actions: opts?.actions,
     });
   }
 

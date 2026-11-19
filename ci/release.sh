@@ -110,16 +110,16 @@ if [[ "$REF" == v* ]]; then
   ASSET_DIR="release-assets"
   rm -rf "$ASSET_DIR" && mkdir -p "$ASSET_DIR"
   # 附件名加上操作系统标识（tauri 默认名只有架构）：同一 release 页里
-  # linux/macos 产物并排时一眼可辨。deb 名形如 zoro_0.1.3_amd64.deb
+  # linux/macos 产物并排时一眼可辨。统一短横线连接：zoro-0.1.8-linux-amd64.deb
   DEB_BASE="$(basename "$DEB")"
-  ASSET_DEB="$(echo "$DEB_BASE" | sed -E 's/_(amd64|arm64|aarch64)\.deb$/_linux_\1.deb/')"
+  ASSET_DEB="$(echo "$DEB_BASE" | sed -E 's/_(amd64|arm64|aarch64)\.deb$/-linux-\1.deb/' | tr '_' '-')"
   cp "$DEB" "$ASSET_DIR/$ASSET_DEB"
   # sha256 指纹文件与 deb 同名，方便下载后校验
   ( cd "$ASSET_DIR" && sha256sum "$ASSET_DEB" > "$ASSET_DEB.sha256" )
   # AppImage 与 .sig 一并上传（update-release.sh 会据此生成更新清单 latest.json）
   if [[ -n "$APPIMAGE" ]]; then
     AIMAGE_BASE="$(basename "$APPIMAGE")"
-    ASSET_IMAGE="$(echo "$AIMAGE_BASE" | sed -E 's/_(amd64|arm64|aarch64)\.AppImage$/_linux_\1.AppImage/')"
+    ASSET_IMAGE="$(echo "$AIMAGE_BASE" | sed -E 's/_(amd64|arm64|aarch64)\.AppImage$/-linux-\1.AppImage/' | tr '_' '-')"
     cp "$APPIMAGE" "$ASSET_DIR/$ASSET_IMAGE"
     cp "${APPIMAGE}.sig" "$ASSET_DIR/$ASSET_IMAGE.sig"
   fi

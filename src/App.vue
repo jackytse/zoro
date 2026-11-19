@@ -4,6 +4,7 @@ import { useColorMode } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { desktop, type DesktopConfig } from "./api/desktop";
 import { useAppTheme } from "./composables/useAppTheme";
+import { useStartupUpdateCheck } from "./composables/useUpdater";
 import OverlayScrollbar from "./components/OverlayScrollbar.vue";
 
 /**
@@ -42,6 +43,9 @@ onMounted(() => {
       .then((c) => (config.value = c))
       .catch(() => {});
   });
+  // 启动自动检测更新（延迟 5s 静默执行）：发现新版本时 toast 提示并提供
+  // 「立即更新」按钮；内部有模块级守卫，整个生命周期只检测一次
+  useStartupUpdateCheck();
 });
 </script>
 

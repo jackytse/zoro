@@ -128,11 +128,11 @@ if [[ "$REF" == v* ]]; then
   ASSET_DIR="release-assets"
   rm -rf "$ASSET_DIR" && mkdir -p "$ASSET_DIR"
   # 附件名加上操作系统标识（tauri 默认名只有架构）：dmg 名形如
-  # zoro_0.1.3_aarch64.dmg → zoro_0.1.3_macos_aarch64.dmg
+  # zoro_0.1.8_aarch64.dmg → zoro-0.1.8-macos-aarch64.dmg（统一短横线连接）
   DMG_BASE="$(basename "$DMG")"
-  ASSET_DMG="$(echo "$DMG_BASE" | sed -E 's/_(aarch64|amd64|arm64)\.dmg$/_macos_\1.dmg/')"
+  ASSET_DMG="$(echo "$DMG_BASE" | sed -E 's/_(aarch64|amd64|arm64)\.dmg$/-macos-\1.dmg/' | tr '_' '-')"
   # zip 命名与 dmg 对齐（带版本 + OS + 架构），不再是笼统的 zoro.app.zip
-  ASSET_ZIP="zoro_${PLIST_VER}_macos_${MAC_ARCH}.app.zip"
+  ASSET_ZIP="zoro-${PLIST_VER}-macos-${MAC_ARCH}.app.zip"
   # zip 用 ditto 打包：保留 macOS 元数据与代码签名，比 zip 命令更可靠
   ditto -c -k --keepParent "$APP" "$ASSET_DIR/$ASSET_ZIP"
   # dmg 与指纹文件一并收集到 ASSET_DIR，统一上传
@@ -142,7 +142,7 @@ if [[ "$REF" == v* ]]; then
   # latest.json 的 darwin-aarch64 条目；仅开启 createUpdaterArtifacts 后才有
   UPDATER_TAR="$APP_DIR/zoro.app.tar.gz"
   if [[ -f "$UPDATER_TAR" && -f "$UPDATER_TAR.sig" ]]; then
-    ASSET_TAR="zoro_${PLIST_VER}_macos_${MAC_ARCH}.app.tar.gz"
+    ASSET_TAR="zoro-${PLIST_VER}-macos-${MAC_ARCH}.app.tar.gz"
     cp "$UPDATER_TAR" "$ASSET_DIR/$ASSET_TAR"
     cp "$UPDATER_TAR.sig" "$ASSET_DIR/$ASSET_TAR.sig"
   else

@@ -4,10 +4,10 @@
 #   1. push tag（形如 v0.1.4）  → 三平台并行构建 + 自动创建 Release + 上传附件
 #   2. workflow_dispatch        → 手动触发（仅验证构建，不打 tag 不上传 Release）
 #
-# 与 CNB 流水线的产物命名保持一致：zoro_<ver>_<os>_<arch>
-#   linux  → zoro_<ver>_linux_amd64.deb
-#   macos  → zoro_<ver>_macos_aarch64.dmg
-#   windows→ zoro_<ver>_windows_amd64-setup.exe / zoro_<ver>_windows_amd64.msi
+# 与 CNB 流水线的产物命名保持一致：zoro-<ver>-<os>-<arch>（短横线连接）
+#   linux  → zoro-<ver>-linux-amd64.deb
+#   macos  → zoro-<ver>-macos-aarch64.dmg
+#   windows→ zoro-<ver>-windows-amd64-setup.exe / zoro-<ver>-windows-amd64.msi
 # 附件一律附带 .sha256 指纹文件。
 #
 # 应用内自动更新不走本流水线：更新端点是 CNB（tauri.conf.json 的
@@ -48,7 +48,7 @@ jobs:
           - os: linux
             runner: ubuntu-22.04
           # ---------- macOS（Apple Silicon，dmg）----------
-          # macos-latest 即 arm64 runner，与 CNB 侧的 macos_aarch64 产物对应
+          # macos-latest 即 arm64 runner，与 CNB 侧的 macos-aarch64 产物对应
           - os: macos
             runner: macos-latest
           # ---------- Windows（nsis setup.exe + msi）----------
@@ -138,8 +138,8 @@ jobs:
         run: |
           V="${GITHUB_REF_NAME#v}"
           mkdir -p release-assets
-          cp src-tauri/target/release/bundle/deb/*.deb "release-assets/zoro_${V}_linux_amd64.deb"
-          ( cd release-assets && sha256sum "zoro_${V}_linux_amd64.deb" > "zoro_${V}_linux_amd64.deb.sha256" )
+          cp src-tauri/target/release/bundle/deb/*.deb "release-assets/zoro-${V}-linux-amd64.deb"
+          ( cd release-assets && sha256sum "zoro-${V}-linux-amd64.deb" > "zoro-${V}-linux-amd64.deb.sha256" )
           ls -lh release-assets
 
       - name: collect assets (macos)
@@ -148,8 +148,8 @@ jobs:
         run: |
           V="${GITHUB_REF_NAME#v}"
           mkdir -p release-assets
-          cp src-tauri/target/release/bundle/dmg/*.dmg "release-assets/zoro_${V}_macos_aarch64.dmg"
-          ( cd release-assets && shasum -a 256 "zoro_${V}_macos_aarch64.dmg" > "zoro_${V}_macos_aarch64.dmg.sha256" )
+          cp src-tauri/target/release/bundle/dmg/*.dmg "release-assets/zoro-${V}-macos-aarch64.dmg"
+          ( cd release-assets && shasum -a 256 "zoro-${V}-macos-aarch64.dmg" > "zoro-${V}-macos-aarch64.dmg.sha256" )
           ls -lh release-assets
 
       - name: collect assets (windows)
@@ -159,9 +159,9 @@ jobs:
           V="${GITHUB_REF_NAME#v}"
           mkdir -p release-assets
           # tauri 默认名形如 zoro_0.1.4_x64-setup.exe / zoro_0.1.4_x64_en-US.msi，
-          # 统一改成与 CNB 侧一致的 <os>_<arch> 命名
-          cp src-tauri/target/release/bundle/nsis/*-setup.exe "release-assets/zoro_${V}_windows_amd64-setup.exe"
-          cp src-tauri/target/release/bundle/msi/*.msi "release-assets/zoro_${V}_windows_amd64.msi"
+          # 统一改成与 CNB 侧一致的短横线 <os>-<arch> 命名
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe "release-assets/zoro-${V}-windows-amd64-setup.exe"
+          cp src-tauri/target/release/bundle/msi/*.msi "release-assets/zoro-${V}-windows-amd64.msi"
           ( cd release-assets && for f in *; do sha256sum "$f" > "$f.sha256"; done )
           ls -lh release-assets
 

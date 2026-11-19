@@ -49,3 +49,26 @@ export function useNotify() {
 
   return notify;
 }
+
+/**
+ * 注册「窗口失焦即关闭限时 toast」。
+ *
+ * 背景：WebView 失去焦点后（用户切到别的应用），toast 的自动关闭计时器
+ * 会被系统节流/暂停——切走再切回来时 toast 还挂在原地，观感就是「失焦后
+ * 不关闭」。这里在 blur 时主动清掉所有限时 toast（本来就该自动消失的）。
+ *
+ * duration === 0 的持久 toast 例外保留：那是更新提示这类需要用户决策的
+ * 消息，不能因为切了个窗口就丢。
+ *
+ * 返回解绑函数，调用方在卸载时移除监听。
+ */
+export function useToastBlurDismiss(): () => void {
+  const toast = useToast();
+  const onBlur = () => {
+    for (const t of toast.toasts.value) {
+      if (t.duration !== 0) toast.remove(t.id);
+    }
+  };
+  window.addEventListener("blur", onBlur);
+  return () => window.removeEventListener("blur", onBlur);
+}

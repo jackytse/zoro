@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { open } from "@tauri-apps/plugin-dialog";
 import { desktop, type DesktopConfig, type DetectedProject, type Project } from "../api/desktop";
@@ -49,18 +49,15 @@ function inferNameFromPath(path: string): string {
   return trimmed.slice(lastSep + 1);
 }
 
-// 名称留空时，输入路径 / 选择目录后自动用末段回填项目名。
-// 为什么用 watch 而不在 browseFolder 里做：手动输入路径同样需要回填，
-// 且 watch 只监听 form.path 一处来源，两个入口天然共享同一份逻辑；
-// 名称非空（用户自己起了名）时绝不覆盖。
-watch(
-  () => form.value.path,
-  (path) => {
-    if (form.value.name.trim()) return;
-    const inferred = inferNameFromPath(path);
-    if (inferred) form.value.name = inferred;
-  },
-);
+/**
+ * 路径输入框失焦：输入完成后才回填，避免打字过程中名称框跟着抖动。
+ * 只在名称为空时填充——用户正在起名时绝不覆盖
+ */
+function handlePathBlur() {
+  if (form.value.name.trim()) return;
+  const inferred = inferNameFromPath(form.value.path);
+  if (inferred) form.value.name = inferred;
+}
 
 /** 表单校验：路径必填、必须选择工具 */
 const formError = computed(() => {
@@ -79,6 +76,9 @@ async function browseFolder() {
     });
     if (typeof selected === "string" && selected) {
       form.value.path = selected;
+      // 选择目录是有意识的完整操作：无论名称是否已填，都以目录名覆盖填充，
+      // 保证名称与刚选的目录一致（用户仍可在提交前手动改）
+      form.value.name = inferNameFromPath(selected);
     }
   } catch (error) {
     notify("error", t("settings.browseFailed"), { description: String(error) });
@@ -945,7 +945,12 @@ export default { name: "SettingsView" };
           </div>
           <UFormField :label="t('settings.projectPath')" :hint="t('settings.pathHint')">
             <div class="flex w-full gap-2">
-              <UInput v-model="form.path" placeholder="/Users/you/Projects/demo" class="flex-1" />
+              <UInput
+                v-model="form.path"
+                placeholder="/Users/you/Projects/demo"
+                class="flex-1"
+                @blur="handlePathBlur"
+              />
               <UButton
                 icon="i-lucide-folder-open"
                 color="neutral"

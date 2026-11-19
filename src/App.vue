@@ -4,7 +4,7 @@ import { useColorMode } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { desktop, type DesktopConfig } from "./api/desktop";
 import { useAppTheme } from "./composables/useAppTheme";
-import { useNotify } from "./composables/useNotify";
+import { useNotify, useToastBlurDismiss } from "./composables/useNotify";
 import { useStartupUpdateCheck } from "./composables/useUpdater";
 import OverlayScrollbar from "./components/OverlayScrollbar.vue";
 
@@ -35,6 +35,8 @@ function toggleColorMode() {
 let offConfigChanged: (() => void) | null = null;
 /** Cmd+Q 二次确认提示监听的取消函数 */
 let offQuitConfirmHint: (() => void) | null = null;
+/** 窗口失焦关闭限时 toast 的解绑函数 */
+let offToastBlur: (() => void) | null = null;
 
 onMounted(() => {
   void desktop
@@ -51,6 +53,8 @@ onMounted(() => {
   offQuitConfirmHint = desktop.onQuitConfirmHint(() => {
     notify("info", t("tray.quitConfirmHint"), { duration: 3000 });
   });
+  // 窗口失焦时主动清掉限时 toast：WebView 后台节流会让自动关闭计时器失效
+  offToastBlur = useToastBlurDismiss();
   // 启动自动检测更新（延迟 5s 静默执行）：发现新版本时 toast 提示并提供
   // 「立即更新」按钮；内部有模块级守卫，整个生命周期只检测一次
   useStartupUpdateCheck();
@@ -59,6 +63,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   offConfigChanged?.();
   offQuitConfirmHint?.();
+  offToastBlur?.();
 });
 </script>
 

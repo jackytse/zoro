@@ -34,9 +34,9 @@ const GAP: i32 = 8;
 /// "zh-CN" / "zh-TW" / "en"），与前端语言包的 key 保持一致。
 fn build_menu(app: &AppHandle, locale: &str) -> tauri::Result<Menu<tauri::Wry>> {
   let (settings_label, quit_label) = match locale {
-    "zh-TW" => ("設定", "結束"),
-    "en" => ("Settings", "Quit"),
-    _ => ("设置", "退出"),
+    "zh-TW" => ("設定", "結束應用"),
+    "en" => ("Settings", "Quit App"),
+    _ => ("设置", "退出应用"),
   };
   Menu::with_items(
     app,

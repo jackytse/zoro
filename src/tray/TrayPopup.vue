@@ -223,7 +223,7 @@ onBeforeUnmount(() => {
           <li v-for="project in recentProjects" :key="project.id">
             <button
               type="button"
-              class="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-elevated focus-visible:bg-elevated focus-visible:outline-none"
+              class="group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-elevated focus-visible:bg-elevated focus-visible:outline-none"
               @click="openProject(project)"
             >
               <!-- IDE 品牌图标：一眼区分项目用哪个工具打开 -->
@@ -238,12 +238,20 @@ onBeforeUnmount(() => {
                   {{ project.path }}
                 </span>
               </span>
-              <span class="shrink-0 text-xs text-dimmed">
+              <!-- 时间：悬停时淡出，把位置让给右侧悬浮的操作按钮组（交叉淡入淡出） -->
+              <span
+                class="shrink-0 text-xs text-dimmed transition-opacity group-hover:opacity-0"
+              >
                 {{ formatRelativeTime(project.lastOpenedAt) }}
               </span>
-              <!-- 悬停出现的操作按钮组：文件管理器 + 终端。包一层紧排容器，
-                   把行容器 gap-3 的大间距替换成 gap-0.5，两个图标贴在一起 -->
-              <span class="flex shrink-0 items-center gap-0.5">
+              <!-- 悬停出现的操作按钮组：文件管理器 + 终端。
+                   绝对定位悬浮在时间上方，不占布局空间——常驻占位曾导致
+                   每行右侧留出一大块空白；悬停时按钮组带与行悬停底色一致的
+                   bg-elevated 圆角背景，与交叉淡出的时间无缝衔接。
+                   pointer-events 联动：未悬停时不拦截时间区域的点击 -->
+              <span
+                class="pointer-events-none absolute right-1.5 flex items-center gap-0.5 rounded-md bg-elevated px-1 py-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100"
+              >
                 <!-- 文件管理器入口：用系统文件管理器打开项目目录；
                      click.stop 避免触发整行的「用 IDE 打开」 -->
                 <UButton
@@ -251,7 +259,6 @@ onBeforeUnmount(() => {
                   color="neutral"
                   variant="ghost"
                   size="xs"
-                  class="opacity-0 transition-opacity group-hover:opacity-100"
                   :aria-label="t('tray.openInFolderNamed', { name: project.name })"
                   :title="t('tray.openInFolder')"
                   @click.stop="openInFolder(project)"
@@ -263,7 +270,6 @@ onBeforeUnmount(() => {
                   color="neutral"
                   variant="ghost"
                   size="xs"
-                  class="opacity-0 transition-opacity group-hover:opacity-100"
                   :aria-label="t('tray.openInTerminalNamed', { name: project.name })"
                   :title="t('tray.openInTerminal')"
                   @click.stop="openInTerminal(project)"

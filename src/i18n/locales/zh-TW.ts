@@ -94,7 +94,8 @@ export default {
     themeLight: "淺色",
     themeDark: "深色",
     launch: "啟動",
-    terminalSection: "終端",
+    // 開啟方式（終端 + 檔案管理器合併卡片）
+    openSection: "開啟方式",
     autostart: "開機自動啟動",
     autostartDesc: "登入系統後自動執行並最小化到托盤，不彈出主視窗",
     autostartOn: "已開啟開機自動啟動",
@@ -113,7 +114,6 @@ export default {
     terminalModeFailed: "設定終端開啟方式失敗",
 
     // 檔案管理器
-    folderSection: "檔案管理器",
     folderMode: "檔案管理器開啟方式",
     folderModeDesc: "最近專案裡點資料夾圖示時，在新視窗還是新分頁開啟（新分頁僅 macOS 支援）",
     folderWindow: "新視窗",

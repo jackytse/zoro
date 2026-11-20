@@ -98,7 +98,8 @@ export default {
     themeLight: "Light",
     themeDark: "Dark",
     launch: "Launch",
-    terminalSection: "Terminal",
+    // Open behavior (merged terminal + file manager card)
+    openSection: "Open behavior",
     autostart: "Launch at login",
     autostartDesc: "Start automatically after login and minimize to tray without showing the window",
     autostartOn: "Launch at login enabled",
@@ -117,7 +118,6 @@ export default {
     terminalModeFailed: "Failed to set terminal open mode",
 
     // File manager
-    folderSection: "File Manager",
     folderMode: "File manager open mode",
     folderModeDesc: "Whether the folder icon in recent projects opens a new window or a new tab (tabs are supported on macOS only)",
     folderWindow: "New window",

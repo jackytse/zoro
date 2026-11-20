@@ -19,7 +19,7 @@ const isLoading = ref(true);
 /* ---------- 设置页布局：Tabs 分组 ---------- */
 /**
  * 设置项增多后单页滚动已经很难找，按使用场景拆成三组：
- * - 通用：外观（主题/语言）、启动（自启/快捷键）、终端行为；
+ * - 通用：外观（主题/语言）、启动（自启/快捷键）、打开方式（终端/文件管理器）、关于与更新；
  * - 项目：增删项目、从本机工具导入；
  * - 工具：本机可用工具清单（只读展示）。
  * UTabs 的 items 用显式 value + slot，内容放各自命名插槽里。
@@ -802,11 +802,14 @@ export default { name: "SettingsView" };
         </div>
       </UCard>
 
-      <!-- 终端：打开方式 / 默认终端 -->
+      <!-- 打开方式：终端（打开方式 / 默认终端）与文件管理器（打开方式）。
+           三行合并进一张卡片：各自独立成卡会显得碎片化，一张卡里用
+           分隔线分行更紧凑，也和「外观」「启动」卡内的多行结构一致 -->
       <UCard>
         <template #header>
-          <p class="font-medium">{{ t("settings.terminalSection") }}</p>
+          <p class="font-medium">{{ t("settings.openSection") }}</p>
         </template>
+        <!-- 终端打开方式 -->
         <div class="flex items-center justify-between gap-4">
           <div>
             <p class="text-sm font-medium">{{ t("settings.terminalMode") }}</p>
@@ -843,14 +846,8 @@ export default { name: "SettingsView" };
             @update:model-value="setDefaultTerminal"
           />
         </div>
-      </UCard>
-
-      <!-- 文件管理器：打开方式（选项卡仅 macOS Finder 支持） -->
-      <UCard>
-        <template #header>
-          <p class="font-medium">{{ t("settings.folderSection") }}</p>
-        </template>
-        <div class="flex items-center justify-between gap-4">
+        <!-- 文件管理器打开方式（选项卡仅 macOS Finder 支持） -->
+        <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
           <div>
             <p class="text-sm font-medium">{{ t("settings.folderMode") }}</p>
             <p class="mt-0.5 text-xs text-muted">
@@ -1079,32 +1076,38 @@ export default { name: "SettingsView" };
               :aria-label="$t('settings.projectTool')"
               @update:model-value="(v: string) => changeTool(project.id, v)"
             />
-            <!-- 终端入口：与托盘弹窗一致，在默认终端打开项目目录 -->
-            <UButton
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-square-terminal"
-              :aria-label="$t('tray.openInTerminal')"
-              :title="$t('tray.openInTerminal')"
-              @click="openInTerminalFromSettings(project)"
-            />
-            <UButton
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-external-link"
-              :aria-label="$t('settings.tryOpen')"
-              @click="openProject(project.id, project.name)"
-            />
-            <UButton
-              size="xs"
-              color="error"
-              variant="ghost"
-              icon="i-lucide-trash-2"
-              :aria-label="$t('settings.removeProject')"
-              @click="removeProject(project.id, project.name)"
-            />
+            <!-- 行操作按钮组：终端 / 试打开 / 删除。包一层紧排容器
+                 （gap-0.5），与托盘弹窗列表的按钮组风格保持一致 -->
+            <span class="flex shrink-0 items-center gap-0.5">
+              <!-- 终端入口：与托盘弹窗一致，在默认终端打开项目目录 -->
+              <UButton
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-square-terminal"
+                :aria-label="$t('tray.openInTerminal')"
+                :title="$t('tray.openInTerminal')"
+                @click="openInTerminalFromSettings(project)"
+              />
+              <UButton
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-external-link"
+                :aria-label="$t('settings.tryOpen')"
+                :title="$t('settings.tryOpen')"
+                @click="openProject(project.id, project.name)"
+              />
+              <UButton
+                size="xs"
+                color="error"
+                variant="ghost"
+                icon="i-lucide-trash-2"
+                :aria-label="$t('settings.removeProject')"
+                :title="$t('settings.removeProject')"
+                @click="removeProject(project.id, project.name)"
+              />
+            </span>
           </li>
         </ul>
       </UCard>
@@ -1113,7 +1116,11 @@ export default { name: "SettingsView" };
     <!-- ============ 工具 ============ -->
     <UCard v-else>
       <template #header>
-        <p class="font-medium">{{ t("settings.tools") }}</p>
+        <!-- 标题 + 数量徽章：与「已配置项目」标题的数量语义对齐 -->
+        <div class="flex items-center gap-2">
+          <p class="font-medium">{{ t("settings.tools") }}</p>
+          <UBadge color="neutral" variant="subtle" size="sm">{{ ideTools.length }}</UBadge>
+        </div>
       </template>
       <p class="mb-3 text-xs text-muted">
         {{ t("settings.toolsDesc") }}

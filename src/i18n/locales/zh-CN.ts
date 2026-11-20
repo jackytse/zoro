@@ -105,7 +105,8 @@ export default {
     // 启动
     launch: "启动",
     // 终端分组标题
-    terminalSection: "终端",
+    // 打开方式（终端 + 文件管理器合并卡片）
+    openSection: "打开方式",
     autostart: "开机自动启动",
     autostartDesc: "登录系统后自动运行并最小化到托盘，不弹出主窗口",
     autostartOn: "已开启开机自启",
@@ -124,7 +125,6 @@ export default {
     terminalModeFailed: "设置终端打开方式失败",
 
     // 文件管理器
-    folderSection: "文件管理器",
     folderMode: "文件管理器打开方式",
     folderModeDesc: "最近项目里点文件夹图标时，在新窗口还是新选项卡打开（新选项卡仅 macOS 支持）",
     folderWindow: "新窗口",

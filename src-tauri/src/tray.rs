@@ -276,6 +276,11 @@ pub fn create_popup_window(app: &AppHandle) -> tauri::Result<()> {
 /// `tray` 是触发本次事件的托盘图标引用：macOS 上通过它访问内部
 /// NSStatusItem 拿权威位置（多显示器混合缩放下几何推算不可靠）。
 pub fn toggle_popup(app: &AppHandle, tray: &tauri::tray::TrayIcon, rect: Rect) {
+  // 调试日志：确认左键事件是否到达应用，以及弹窗窗口与可见性状态
+  let dbg_visible = app
+    .get_webview_window(POPUP_LABEL)
+    .and_then(|w| w.is_visible().ok());
+  log::debug!("toggle_popup 触发：rect={rect:?} 弹窗存在={} 可见={dbg_visible:?}", app.get_webview_window(POPUP_LABEL).is_some());
   let Some(window) = app.get_webview_window(POPUP_LABEL) else {
     log::error!("弹窗窗口不存在，可能被销毁");
     return;
@@ -317,6 +322,7 @@ pub fn on_popup_blur(app: &AppHandle) {
     }
   }
   if let Some(window) = app.get_webview_window(POPUP_LABEL) {
+    log::debug!("popup blur 隐藏（grace 判定通过）");
     let _ = window.hide();
     *app.state::<AppState>().popup_last_hidden.lock().unwrap() = Some(Instant::now());
   }
@@ -427,6 +433,13 @@ fn position_near_tray(
   let target_pos = tauri::LogicalPosition::new(x, y);
   #[cfg(not(target_os = "macos"))]
   let target_pos = PhysicalPosition::new(x as i32, y as i32);
+  // 调试日志：placement 全量数据 + 最终落位坐标，用于排查「show 成功但看不见」
+  log::debug!(
+    "popup placement: icon=({:.1},{:.1}~{:.1},{:.1}) screen=({:.1},{:.1})~({:.1},{:.1}) scale={} win=({:.1},{:.1}) target=({x:.1},{y:.1})",
+    placement.icon_center_x, placement.icon_top, placement.icon_center_x, placement.icon_bottom,
+    placement.screen_left, placement.screen_top, placement.screen_right, placement.screen_bottom,
+    placement.scale, win_w, win_h
+  );
   window.set_position(target_pos)
 }
 

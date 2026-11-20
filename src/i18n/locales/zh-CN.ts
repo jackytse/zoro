@@ -85,8 +85,8 @@ export default {
     openTryFailed: "打开「{name}」失败",
     openedAt: "{time}打开",
 
-    // 可用工具
-    tools: "可用工具",
+    // 可用开发工具
+    tools: "可用开发工具",
     toolsDesc: "打开顺序：优先执行 CLI，找不到时通过登录 shell 解析，最后回退到 open -a 应用名。",
 
     // 通用

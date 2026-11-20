@@ -83,7 +83,7 @@ export default {
     openTryFailed: "Failed to open \"{name}\"",
     openedAt: "opened {time}",
 
-    tools: "Available tools",
+    tools: "Available dev tools",
     toolsDesc:
       "Open order: run the CLI first, resolve via login shell when missing, finally fall back to open -a with the app name.",
 

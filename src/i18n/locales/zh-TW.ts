@@ -80,7 +80,7 @@ export default {
     openTryFailed: "開啟「{name}」失敗",
     openedAt: "{time}開啟",
 
-    tools: "可用工具",
+    tools: "可用開發工具",
     toolsDesc: "開啟順序：優先執行 CLI，找不到時透過登入 shell 解析，最後回退到 open -a 應用名稱。",
 
     general: "一般",

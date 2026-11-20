@@ -203,6 +203,31 @@ pub fn create_tray(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
+/// 切换托盘图标的「有更新」角标：常规图标 ↔ 带圆点角标的图标。
+/// 由 set_tray_update_badge 命令调用（自动检测发现新版本时加角标，
+/// 恢复最新时摘除）。两份图标都是模板图，随明暗主题自动反色。
+pub fn set_update_badge(app: &AppHandle, has_update: bool) {
+  let Some(tray) = app.tray_by_id(TRAY_ID) else {
+    log::warn!("托盘图标不存在，更新角标未切换");
+    return;
+  };
+  let bytes: &[u8] = if has_update {
+    include_bytes!("../icons/tray-update.png")
+  } else {
+    include_bytes!("../icons/tray.png")
+  };
+  let icon = match tauri::image::Image::from_bytes(bytes) {
+    Ok(icon) => icon,
+    Err(err) => {
+      log::warn!("解析托盘更新角标图标失败：{err}");
+      return;
+    }
+  };
+  if let Err(err) = tray.set_icon(Some(icon)) {
+    log::warn!("切换托盘更新角标失败：{err}");
+  }
+}
+
 /// 语言切换后重建托盘菜单与 tooltip（set_locale 命令调用）。
 /// 失败只记日志：菜单语言滞后一拍不影响任何功能。
 pub fn refresh_tray_locale(app: &AppHandle) {

@@ -85,6 +85,11 @@ pub struct Config {
   /// 与语言同构：实际应用到 <html> 的 .dark 类在前端做，Rust 侧只存偏好。
   #[serde(default)]
   pub theme: Option<String>,
+  /// 自动检测更新开关，默认开启。开启时前端每小时静默检测一次，
+  /// 发现新版本时提示用户并给托盘图标加角标；关闭则只在用户手动
+  /// 点「检测更新」时才请求清单。
+  #[serde(default = "default_true")]
+  pub auto_check_update: bool,
 }
 
 /// serde 默认值辅助：true
@@ -480,6 +485,8 @@ impl Config {
       locale: None,
       // 出厂默认：跟随系统主题（前端按 prefers-color-scheme 探测）
       theme: None,
+      // 出厂默认：开启自动检测更新（前端每小时静默检测一次）
+      auto_check_update: true,
     }
   }
 }

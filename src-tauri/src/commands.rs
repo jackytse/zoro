@@ -431,6 +431,30 @@ pub fn set_theme(
   )
 }
 
+/// 设置自动检测更新开关（每小时静默检测一次；默认开）。
+/// 开关只影响前端的定时检测节奏，已亮起的托盘更新角标不随之摘除——
+/// 「有新版本」是客观事实，用户关掉自动检测仍可在设置页手动检测。
+#[tauri::command]
+pub fn set_auto_check_update(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  enabled: bool,
+) -> Result<Config, String> {
+  set_config_field(
+    &app,
+    &state,
+    |cfg| std::mem::replace(&mut cfg.auto_check_update, enabled),
+    |cfg, old| cfg.auto_check_update = old,
+  )
+}
+
+/// 切换托盘图标的「有更新」角标（前端自动/手动检测到结果后调用）。
+/// 只切图标不动配置，失败仅记日志——角标是纯提示，不影响主流程。
+#[tauri::command]
+pub fn set_tray_update_badge(app: AppHandle, has_update: bool) {
+  crate::tray::set_update_badge(&app, has_update);
+}
+
 /// 设置界面语言："zh-CN" / "zh-TW" / "en"，None = 跟随系统语言。
 /// 保存后广播 config-changed（前端两窗口热切换），并按新语言重建托盘菜单。
 #[tauri::command]

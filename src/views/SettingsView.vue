@@ -474,6 +474,16 @@ async function setFolderMode(mode: string) {
 
 /* ---------- 通用设置：开机自启 ---------- */
 
+/** 设置自动检测更新开关；失败时重新拉取配置以回弹开关状态 */
+async function setAutoCheckUpdate(enabled: boolean) {
+  try {
+    config.value = await desktop.setAutoCheckUpdate(enabled);
+  } catch (error) {
+    notify("error", t("settings.autoCheckUpdateFailed"), { description: String(error) });
+    config.value = await desktop.getConfig();
+  }
+}
+
 /** 切换开机自启；失败时重新拉取配置以回弹开关状态 */
 async function toggleAutostart(enabled: boolean) {
   try {
@@ -938,6 +948,20 @@ export default { name: "SettingsView" };
             class="w-32 shrink-0"
             :aria-label="t('settings.updateChannel')"
             @update:model-value="setChannel($event as UpdateChannel)"
+          />
+        </div>
+        <!-- 自动检测更新行：开关控制启动检测 + 每小时轮询；默认开 -->
+        <div class="mt-6 flex items-center justify-between gap-4 border-t border-default pt-6">
+          <div class="min-w-0">
+            <p class="text-sm font-medium">{{ t("settings.autoCheckUpdate") }}</p>
+            <p class="mt-0.5 text-xs text-muted">
+              {{ t("settings.autoCheckUpdateDesc") }}
+            </p>
+          </div>
+          <!-- 开关组件：关闭即停轮询，打开后从下一整点恢复，无需重启应用 -->
+          <USwitch
+            :model-value="config?.autoCheckUpdate ?? true"
+            @update:model-value="setAutoCheckUpdate($event as boolean)"
           />
         </div>
         <!-- 源码仓库行：两个镜像仓库的外链入口，点击用系统默认浏览器打开 -->

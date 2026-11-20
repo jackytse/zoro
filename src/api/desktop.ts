@@ -44,6 +44,8 @@ export interface DesktopConfig {
   locale: string | null;
   /** 界面主题："light" | "dark"；null = 跟随系统 */
   theme: string | null;
+  /** 自动检测更新开关（默认开启；开启时每小时静默检测一次） */
+  autoCheckUpdate: boolean;
 }
 
 /** 本机终端工具扫描结果（设置页「默认终端」下拉框的单条记录） */
@@ -115,6 +117,12 @@ export const desktop = {
     invoke<DesktopConfig>("set_global_shortcut", { shortcut }),
   /** 设置开机自动启动；失败时 reject 中文错误 */
   setAutostart: (enabled: boolean) => invoke<DesktopConfig>("set_autostart", { enabled }),
+  /** 设置自动检测更新开关（默认开；开启时前端每小时静默检测一次） */
+  setAutoCheckUpdate: (enabled: boolean) =>
+    invoke<DesktopConfig>("set_auto_check_update", { enabled }),
+  /** 切换托盘图标的「有更新」箭头角标：检测发现新版本时加，恢复最新时摘 */
+  setTrayUpdateBadge: (hasUpdate: boolean) =>
+    invoke<void>("set_tray_update_badge", { hasUpdate }),
   showMainWindow: () => invoke<void>("show_main_window"),
   hideTrayPopup: () => invoke<void>("hide_tray_popup"),
   quitApp: () => invoke<void>("quit_app"),

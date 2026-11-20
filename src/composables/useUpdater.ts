@@ -24,6 +24,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useToast } from "@nuxt/ui/composables";
 import { useNotify } from "./useNotify";
+import { desktop } from "../api/desktop";
 
 /** 更新通道：stable 正式版 / beta 预发布（各对应一份更新清单） */
 export type UpdateChannel = "stable" | "beta";
@@ -184,8 +185,15 @@ export function useUpdater() {
 }
 
 /**
- * 启动自动检测更新：应用挂载后延迟几秒静默检测一次，发现新版本时
- * 用 toast 提示用户并提供「立即更新」按钮（下载完成再提示重启）。
+ * 启动自动检测更新 + 每小时轮询。
+ *
+ * 节奏：应用挂载后延迟 5s 做首次静默检测，之后每 1 小时检测一次。
+ * 开关来自后端配置 autoCheckUpdate（设置页可切换，默认开）；开关变更
+ * 经 config-changed 事件同步——关掉后轮询空转（不请求清单），重新打开
+ * 后从下一个整点起恢复检测。
+ *
+ * 发现新版本时：toast 提示并提供「立即更新」按钮，同时调用
+ * set_tray_update_badge 给托盘图标加箭头角标；恢复最新时摘除角标。
  *
  * 为什么单独一个入口而不是把检测塞进 useUpdater：useUpdater 每次调用
  * 都生成一套独立的响应式状态（供设置页渲染进度），App 层若复用同一个
@@ -193,11 +201,14 @@ export function useUpdater() {
  * 触发」这条一次性链路，独立实例 + 模块级守卫标记最简单。
  */
 
-/** 守卫标记：整个应用生命周期内只自动检测一次（热重载也不重复弹） */
+/** 守卫标记：整个应用生命周期只启动一轮（启动检测 + 定时器） */
 let startupCheckScheduled = false;
 
 /** 启动检测的延迟毫秒数：给主界面加载让路，避免开机就抢网络/弹窗 */
 const AUTO_CHECK_DELAY_MS = 5000;
+
+/** 自动检测的轮询间隔：1 小时 */
+const AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 export function useStartupUpdateCheck() {
   // App.vue 的 onMounted 里调用；重复调用直接忽略（守卫标记已置位）
@@ -231,11 +242,18 @@ export function useStartupUpdateCheck() {
     }
   }
 
-  setTimeout(() => {
-    void checkForUpdate().then(() => {
-      // 静默检测只对「发现新版本」出声：已是最新/出错（无网、清单 404）
-      // 都不打扰用户，用户想看细节去设置页手动检测
-      if (phase.value !== "available") return;
+  /** 当前是否已给托盘加过角标：避免每次轮询都重复设置同一状态 */
+  let badgeShown = false;
+
+  /** 静默执行一轮检测，并同步 toast 提示与托盘角标 */
+  async function silentCheck() {
+    await checkForUpdate();
+    if (phase.value === "available") {
+      // 发现新版本：加托盘箭头角标（重复检测命中同一版本时跳过）
+      if (!badgeShown) {
+        badgeShown = true;
+        void desktop.setTrayUpdateBadge(true).catch(() => {});
+      }
       toast.add({
         title: t("settings.newVersionFound", { version: newVersion.value }),
         color: "info",
@@ -243,6 +261,32 @@ export function useStartupUpdateCheck() {
         duration: 0, // 更新提示不自动消失，避免用户没看到就错过
         actions: [{ label: t("settings.updateNow"), onClick: () => void installFromToast() }],
       });
-    });
+    } else if (badgeShown) {
+      // 恢复最新（用户已更新或清单回退）：摘除角标；出错（断网等）保持现状
+      badgeShown = false;
+      void desktop.setTrayUpdateBadge(false).catch(() => {});
+    }
+  }
+
+  /** 首次定时启动（5s 延迟）+ 每小时轮询；轮询回调里实时读开关 */
+  setTimeout(() => {
+    void desktop
+      .getConfig()
+      .then((cfg) => {
+        if (!cfg.autoCheckUpdate) return;
+        return silentCheck();
+      })
+      .catch(() => {});
+    // 每小时的检测在回调里现读配置：设置页切换开关无需重启即生效，
+    // 关闭时该轮空转（不请求清单），打开时下一整点恢复
+    setInterval(() => {
+      void desktop
+        .getConfig()
+        .then((cfg) => {
+          if (!cfg.autoCheckUpdate) return;
+          return silentCheck();
+        })
+        .catch(() => {});
+    }, AUTO_CHECK_INTERVAL_MS);
   }, AUTO_CHECK_DELAY_MS);
 }

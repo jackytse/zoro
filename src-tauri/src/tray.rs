@@ -315,6 +315,12 @@ struct TrayPlacement {
   screen_top: f64,
   screen_right: f64,
   screen_bottom: f64,
+  /// placement 各坐标值所属空间的缩放系数：
+  /// - macOS：点空间，恒为 1.0（点坐标本身就是「逻辑」尺度）；
+  /// - Windows/Linux：目标显示器的 DPI 缩放（物理像素 = 逻辑像素 × scale）。
+  ///   弹窗尺寸在跨屏/跨缩放落位时必须乘上这个系数换算成物理尺寸，
+  ///   否则 125%/150% 缩放下窗口高度被低估，弹窗整体偏下、底部被截断。
+  scale: f64,
 }
 
 /// 把弹窗贴着托盘图标放置，并夹紧在图标所在显示器的可视范围内。
@@ -343,12 +349,16 @@ fn position_near_tray(
   #[cfg(not(target_os = "macos"))]
   let _ = tray;
 
-  // 窗口逻辑尺寸（CSS px）：跨屏移动时不变，用它参与坐标运算才能保证
-  // 在不同缩放的屏上都得到正确的视觉大小
+  // 窗口逻辑尺寸（CSS px）：跨屏移动时不变。先统一换算成逻辑值，
+  // 落位时再按目标屏的 scale 换算回目标空间的尺寸：
+  // - macOS：placement 就在点空间，直接用逻辑值参与运算；
+  // - Windows/Linux：placement 在物理像素空间，须乘目标屏 scale，
+  //   否则 150% 缩放下 win_h 只有真实值的 2/3，弹窗位置整体偏下，
+  //   底部状态栏被压到屏幕/任务栏之外（历史 bug 根因）。
   let window_size = window.outer_size().unwrap_or_else(|_| (372, 460).into());
   let win_scale = window.scale_factor().unwrap_or(1.0);
-  let win_w = window_size.width as f64 / win_scale;
-  let win_h = window_size.height as f64 / win_scale;
+  let win_w_logical = window_size.width as f64 / win_scale;
+  let win_h_logical = window_size.height as f64 / win_scale;
 
   // ---------- 1. 取托盘几何 ----------
   // 优先 NSStatusItem 权威数据（macOS）；失败则退回各平台的几何推算
@@ -360,6 +370,10 @@ fn position_near_tray(
 
   #[cfg(not(target_os = "macos"))]
   let placement = fallback_geometry_other(app, rect);
+
+  // 按目标屏缩放换算出与 placement 同空间的窗口尺寸
+  let win_w = win_w_logical * placement.scale;
+  let win_h = win_h_logical * placement.scale;
 
   let gap = GAP as f64;
 
@@ -441,6 +455,8 @@ fn status_item_geometry(tray: &tauri::tray::TrayIcon) -> Option<TrayPlacement> {
         screen_right: vf.origin.x + vf.size.width,
         screen_top: main_h - (vf.origin.y + vf.size.height),
         screen_bottom: main_h - vf.origin.y,
+        // macOS 点空间本身就是逻辑尺度，缩放系数恒为 1
+        scale: 1.0,
       })
     })
     .ok()
@@ -478,6 +494,8 @@ fn fallback_geometry_macos(app: &AppHandle, rect: Rect) -> TrayPlacement {
       screen_top: top,
       screen_right: right,
       screen_bottom: bottom,
+      // 已换算成点空间，缩放系数恒为 1
+      scale: 1.0,
     })
   });
 
@@ -496,6 +514,7 @@ fn fallback_geometry_macos(app: &AppHandle, rect: Rect) -> TrayPlacement {
     screen_top: 0.0,
     screen_right: f64::MAX,
     screen_bottom: f64::MAX,
+    scale: 1.0,
   })
 }
 
@@ -527,6 +546,8 @@ fn fallback_geometry_other(app: &AppHandle, rect: Rect) -> TrayPlacement {
         screen_top: p.y as f64,
         screen_right: (p.x + sz.width as i32) as f64,
         screen_bottom: (p.y + sz.height as i32) as f64,
+        // 物理像素空间：弹窗尺寸换算要用目标屏的真实缩放系数
+        scale: m.scale_factor(),
       }
     })
     .unwrap_or_else(|| TrayPlacement {
@@ -538,6 +559,7 @@ fn fallback_geometry_other(app: &AppHandle, rect: Rect) -> TrayPlacement {
       screen_top: 0.0,
       screen_right: f64::MAX,
       screen_bottom: f64::MAX,
+      scale: 1.0,
     })
 }
 

@@ -454,6 +454,24 @@ async function setTerminalMode(mode: string) {
   }
 }
 
+/* ---------- 通用设置：文件管理器打开方式 ---------- */
+
+/** 展示用归一化：None / 脏数据一律显示为默认的 "window" */
+const folderModeDisplay = computed<"window" | "tab">(
+  () => (config.value?.folderOpenMode === "tab" ? "tab" : "window"),
+);
+
+/** 设置文件管理器打开方式；失败时重新拉取配置以回弹选项状态 */
+async function setFolderMode(mode: string) {
+  const value: "window" | "tab" = mode === "tab" ? "tab" : "window";
+  try {
+    config.value = await desktop.setFolderMode(value);
+  } catch (error) {
+    notify("error", t("settings.folderModeFailed"), { description: String(error) });
+    config.value = await desktop.getConfig();
+  }
+}
+
 /* ---------- 通用设置：开机自启 ---------- */
 
 /** 切换开机自启；失败时重新拉取配置以回弹开关状态 */
@@ -823,6 +841,32 @@ export default { name: "SettingsView" };
             class="w-44 shrink-0"
             :aria-label="t('settings.defaultTerminal')"
             @update:model-value="setDefaultTerminal"
+          />
+        </div>
+      </UCard>
+
+      <!-- 文件管理器：打开方式（选项卡仅 macOS Finder 支持） -->
+      <UCard>
+        <template #header>
+          <p class="font-medium">{{ t("settings.folderSection") }}</p>
+        </template>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">{{ t("settings.folderMode") }}</p>
+            <p class="mt-0.5 text-xs text-muted">
+              {{ t("settings.folderModeDesc") }}
+            </p>
+          </div>
+          <USelect
+            :model-value="folderModeDisplay"
+            :items="[
+              { label: t('settings.folderWindow'), value: 'window' },
+              { label: t('settings.folderTab'), value: 'tab' },
+            ]"
+            size="sm"
+            class="w-44 shrink-0"
+            :aria-label="t('settings.folderMode')"
+            @update:model-value="setFolderMode"
           />
         </div>
       </UCard>

@@ -251,6 +251,84 @@ pub fn open_in_terminal(path: &str, mode: &str, preferred: Option<&str>) -> Resu
   }
 }
 
+/// 用系统文件管理器打开一个目录（最近项目悬停的文件夹图标入口）。
+///
+/// mode："window" = 新窗口（默认）；"tab" = 新选项卡。
+///
+/// 各平台策略：
+/// - macOS：window 走 `open <目录>`（Finder 新窗口，不依赖任何授权）；
+///   tab 走 AppleScript——Finder 支持 ⌘T 开标签页，先借 System Events 发
+///   ⌘T（需要「辅助功能」授权），再把最前面窗口的目标目录切过去；没有
+///   现成窗口时直接 make new window。AppleScript 失败（权限被拒等）时
+///   降级为 `open` 新窗口——「打开且目录正确」永远优先于窗口形态。
+/// - Windows：`explorer <目录>`。Win11 的标签页没有可靠的编程式接口，
+///   两种模式行为一致（均为新窗口）。
+/// - Linux：`xdg-open <目录>` → 桌面环境默认文件管理器，无模式概念。
+pub fn open_in_file_manager(path: &str, mode: &str) -> Result<(), String> {
+  let target = Path::new(path);
+  if !target.exists() {
+    return Err(format!("路径不存在或已被移动：{path}"));
+  }
+  if !target.is_dir() {
+    return Err(format!("不是目录，无法在文件管理器中打开：{path}"));
+  }
+
+  #[cfg(target_os = "macos")]
+  {
+    // tab：AppleScript 在现有 Finder 窗口里开新标签页并切换目标目录
+    if mode == "tab" {
+      let script = finder_tab_script(path);
+      match osascript(&script) {
+        Ok(()) => return Ok(()),
+        Err(err) => {
+          log::warn!("AppleScript 在 Finder 开标签页失败：{}", enrich_osascript_error(&err))
+        }
+      }
+      // 授权被拒 / 无现有窗口等失败场景降级为新窗口，保证总有结果
+    }
+    // window（以及 tab 的降级）：open 命令总是为目录新开一个 Finder 窗口，
+    // 不依赖自动化/辅助功能授权，是最稳的基线链路
+    match Command::new("open").arg(target).spawn() {
+      Ok(_) => Ok(()),
+      Err(err) => Err(format!("打开文件管理器失败：{err}")),
+    }
+  }
+
+  #[cfg(target_os = "windows")]
+  {
+    // mode 参数只在 macOS 的 Finder AppleScript 链路有意义，这里显式消费掉
+    let _ = mode;
+    // explorer 打开不存在的路径时会弹系统对话框而不是非零退出，
+    // 因此前置的 exists() 校验是唯一可靠的失败拦截点
+    Command::new("explorer")
+      .arg(target)
+      .spawn()
+      .map(|_| ())
+      .map_err(|err| format!("打开文件管理器失败：{err}"))
+  }
+
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  {
+    let _ = mode;
+    Command::new("xdg-open")
+      .arg(target)
+      .spawn()
+      .map(|_| ())
+      .map_err(|err| format!("打开文件管理器失败：{err}"))
+  }
+}
+
+/// Finder 开标签页的 AppleScript：有现成窗口时借 System Events 发 ⌘T
+/// （需要「辅助功能」权限），再把最前面窗口的目标目录切到项目路径；
+/// 没有窗口时直接 make new window。路径按 AppleScript 字符串字面量转义。
+#[cfg(target_os = "macos")]
+fn finder_tab_script(path: &str) -> String {
+  let file = apple_escape(path);
+  format!(
+    "tell application \"Finder\"\n  activate\n  if (count of windows) > 0 then\n    tell application \"System Events\" to keystroke \"t\" using command down\n    delay 0.3\n    set target of front window to POSIX file \"{file}\"\n  else\n    make new Finder window to POSIX file \"{file}\"\n  end if\nend tell"
+  )
+}
+
 /// 判断某个终端应用是否已安装（按 .app 包路径探测）。
 #[cfg(target_os = "macos")]
 fn app_installed(app: &str) -> bool {

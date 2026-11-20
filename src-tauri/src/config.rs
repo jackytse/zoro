@@ -72,6 +72,11 @@ pub struct Config {
   /// 用户显式选择后按选择执行，所选应用未安装时自动回落到另一个。
   #[serde(default)]
   pub terminal_tool: Option<String>,
+  /// 文件管理器打开方式："window" = 新窗口（默认），"tab" = 新选项卡。
+  /// 选项卡目前仅 macOS Finder 支持（AppleScript ⌘T 链路）；Windows/Linux
+  /// 的系统文件管理器没有可靠的编程式开标签接口，两种模式行为相同。
+  #[serde(default)]
+  pub folder_open_mode: Option<String>,
   /// 界面语言："zh-CN" | "zh-TW" | "en"；None = 跟随系统语言。
   /// 前端两个窗口与 Rust 托盘菜单共用这一份语言设置。
   #[serde(default)]
@@ -116,6 +121,15 @@ impl Config {
   pub fn terminal_mode(&self) -> &str {
     match self.terminal_open_mode.as_deref() {
       Some("existing") | Some("tab") => "tab",
+      _ => "window",
+    }
+  }
+
+  /// 归一化后的文件管理器打开方式：只可能是 "window" 或 "tab"。
+  /// 与 terminal_mode 同构：None / 脏数据一律回落到默认的 "window"。
+  pub fn folder_mode(&self) -> &str {
+    match self.folder_open_mode.as_deref() {
+      Some("tab") => "tab",
       _ => "window",
     }
   }
@@ -460,6 +474,8 @@ impl Config {
       terminal_open_mode: None,
       // 出厂默认：终端工具自动推荐（扫描已安装的终端后选常用的那个）
       terminal_tool: None,
+      // 出厂默认：文件管理器在新窗口打开（旧配置文件缺字段时同样按 window 处理）
+      folder_open_mode: None,
       // 出厂默认：跟随系统语言（前端按 navigator.language 探测）
       locale: None,
       // 出厂默认：跟随系统主题（前端按 prefers-color-scheme 探测）

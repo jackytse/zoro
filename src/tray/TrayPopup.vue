@@ -128,6 +128,16 @@ async function openInTerminal(project: Project) {
   }
 }
 
+/** 用系统文件管理器打开项目目录（图标按钮触发）。
+ *  与终端入口同理：成功不打扰，失败才提示原因 */
+async function openInFolder(project: Project) {
+  try {
+    await desktop.openInFolder(project.path);
+  } catch (error) {
+    notify("error", t("tray.folderOpenFailed"), { description: String(error) });
+  }
+}
+
 /** 配置变更监听的取消函数；卸载时解绑，避免重复订阅 */
 let offConfigChanged: (() => void) | null = null;
 /** Cmd+Q 二次确认提示监听的取消函数 */
@@ -231,6 +241,18 @@ onBeforeUnmount(() => {
               <span class="shrink-0 text-xs text-dimmed">
                 {{ formatRelativeTime(project.lastOpenedAt) }}
               </span>
+              <!-- 悬停出现的文件管理器入口：用系统文件管理器打开项目目录；
+                   click.stop 避免触发整行的「用 IDE 打开」 -->
+              <UButton
+                icon="i-lucide-folder-open"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                :aria-label="t('tray.openInFolderNamed', { name: project.name })"
+                :title="t('tray.openInFolder')"
+                @click.stop="openInFolder(project)"
+              />
               <!-- 悬停出现的终端入口：在系统终端打开项目目录；
                    click.stop 避免触发整行的「用 IDE 打开」 -->
               <UButton

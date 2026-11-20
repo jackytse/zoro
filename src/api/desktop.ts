@@ -36,6 +36,8 @@ export interface DesktopConfig {
   autostart: boolean;
   /** 终端打开方式："window" = 新窗口（默认），"tab" = 新选项卡（旧配置的 "existing" 同义） */
   terminalOpenMode: string | null;
+  /** 文件管理器打开方式："window" = 新窗口（默认），"tab" = 新选项卡（仅 macOS Finder 支持） */
+  folderOpenMode: string | null;
   /** 默认终端工具："iterm" / "terminal"；null = 自动推荐 */
   terminalTool: string | null;
   /** 界面语言："zh-CN" | "zh-TW" | "en"；null = 跟随系统语言 */
@@ -77,6 +79,8 @@ export const desktop = {
 
   /** 在系统终端打开一个目录（最近项目悬停的终端图标）；方式读自配置 */
   openInTerminal: (path: string) => invoke<void>("open_in_terminal", { path }),
+  /** 用系统文件管理器打开一个目录（最近项目悬停的文件夹图标） */
+  openInFolder: (path: string) => invoke<void>("open_in_folder", { path }),
   /** 更换已配置项目的打开工具（设置页项目行下拉框）；返回更新后的配置 */
   setProjectTool: (projectId: string, toolId: string) =>
     invoke<DesktopConfig>("set_project_tool", { projectId, toolId }),
@@ -91,6 +95,10 @@ export const desktop = {
   /** 设置终端打开方式："window"（新窗口，默认）或 "tab"（新选项卡） */
   setTerminalMode: (mode: "window" | "tab") =>
     invoke<DesktopConfig>("set_terminal_mode", { mode }),
+
+  /** 设置文件管理器打开方式："window"（新窗口，默认）或 "tab"（新选项卡，仅 macOS） */
+  setFolderMode: (mode: "window" | "tab") =>
+    invoke<DesktopConfig>("set_folder_mode", { mode }),
   /**
    * 设置界面语言；null = 跟随系统。
    * 后端会广播 config-changed 并按新语言重建托盘菜单。

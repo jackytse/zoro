@@ -316,6 +316,39 @@ pub fn open_in_terminal(state: State<'_, AppState>, path: String) -> Result<(), 
   opener::open_in_terminal(&path, &mode, tool.as_deref())
 }
 
+/// 用系统文件管理器打开指定目录（最近项目悬停出现的文件夹图标按钮）。
+/// 打开方式（新窗口/新选项卡）读自配置；选项卡仅 macOS Finder 支持。
+#[tauri::command]
+pub fn open_in_folder(state: State<'_, AppState>, path: String) -> Result<(), String> {
+  let mode = {
+    let cfg = state.config.lock().unwrap();
+    cfg.folder_mode().to_string()
+  };
+  opener::open_in_file_manager(&path, &mode)
+}
+
+/// 设置文件管理器打开方式："window"（新窗口，默认）或 "tab"（新选项卡）。
+/// 选项卡目前仅 macOS Finder 支持；其他平台选 tab 时行为与 window 相同。
+#[tauri::command]
+pub fn set_folder_mode(
+  app: AppHandle,
+  state: State<'_, AppState>,
+  mode: String,
+) -> Result<Config, String> {
+  // 只接受合法值，其余直接拒绝，避免把垃圾数据写进配置文件
+  let normalized = match mode.as_str() {
+    "window" => "window",
+    "tab" => "tab",
+    _ => return Err(format!("不支持的文件管理器打开方式：{mode}")),
+  };
+  set_config_field(
+    &app,
+    &state,
+    |cfg| std::mem::replace(&mut cfg.folder_open_mode, Some(normalized.to_string())),
+    |cfg, old| cfg.folder_open_mode = old,
+  )
+}
+
 /// 扫描本机已安装的终端工具，供设置页「默认终端」下拉框渲染。
 /// 返回 [{id, name, icon, installed}]；前端据此推荐默认项（iTerm2 优先）。
 #[tauri::command]

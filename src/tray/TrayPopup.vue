@@ -241,30 +241,34 @@ onBeforeUnmount(() => {
               <span class="shrink-0 text-xs text-dimmed">
                 {{ formatRelativeTime(project.lastOpenedAt) }}
               </span>
-              <!-- 悬停出现的文件管理器入口：用系统文件管理器打开项目目录；
-                   click.stop 避免触发整行的「用 IDE 打开」 -->
-              <UButton
-                icon="i-lucide-folder-open"
-                color="neutral"
-                variant="ghost"
-                size="xs"
-                class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                :aria-label="t('tray.openInFolderNamed', { name: project.name })"
-                :title="t('tray.openInFolder')"
-                @click.stop="openInFolder(project)"
-              />
-              <!-- 悬停出现的终端入口：在系统终端打开项目目录；
-                   click.stop 避免触发整行的「用 IDE 打开」 -->
-              <UButton
-                icon="i-lucide-square-terminal"
-                color="neutral"
-                variant="ghost"
-                size="xs"
-                class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                :aria-label="t('tray.openInTerminalNamed', { name: project.name })"
-                :title="t('tray.openInTerminal')"
-                @click.stop="openInTerminal(project)"
-              />
+              <!-- 悬停出现的操作按钮组：文件管理器 + 终端。包一层紧排容器，
+                   把行容器 gap-3 的大间距替换成 gap-0.5，两个图标贴在一起 -->
+              <span class="flex shrink-0 items-center gap-0.5">
+                <!-- 文件管理器入口：用系统文件管理器打开项目目录；
+                     click.stop 避免触发整行的「用 IDE 打开」 -->
+                <UButton
+                  icon="i-lucide-folder-open"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  class="opacity-0 transition-opacity group-hover:opacity-100"
+                  :aria-label="t('tray.openInFolderNamed', { name: project.name })"
+                  :title="t('tray.openInFolder')"
+                  @click.stop="openInFolder(project)"
+                />
+                <!-- 终端入口：在系统终端打开项目目录；
+                     click.stop 避免触发整行的「用 IDE 打开」 -->
+                <UButton
+                  icon="i-lucide-square-terminal"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  class="opacity-0 transition-opacity group-hover:opacity-100"
+                  :aria-label="t('tray.openInTerminalNamed', { name: project.name })"
+                  :title="t('tray.openInTerminal')"
+                  @click.stop="openInTerminal(project)"
+                />
+              </span>
             </button>
           </li>
         </ul>
